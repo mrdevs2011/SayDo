@@ -30,10 +30,12 @@ button{font-family:inherit}
 .ibtn.del.armed{background:#b3130b;box-shadow:0 0 0 4px rgba(255,59,48,.25)}
 .empty{text-align:center;color:#aaa;padding:80px 20px;font-size:15px;line-height:1.6}
 
-.fab{position:fixed;width:58px;height:58px;border-radius:50%;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10;box-shadow:0 4px 14px rgba(0,0,0,.18)}
-.fab:active{transform:translateX(-50%) scale(.92)}
-.fab-add{bottom:34px;left:50%;transform:translateX(-50%);background:#007AFF}
-.fab svg{width:26px;height:26px}
+.master{position:fixed;bottom:34px;left:50%;transform:translateX(-50%);z-index:10;display:flex;align-items:center;gap:12px;background:#fff;padding:10px 18px;border-radius:28px;box-shadow:0 4px 18px rgba(0,0,0,.12)}
+.master span{font-size:15px;font-weight:600;color:#1c1c1e;min-width:32px;text-align:center}
+.master .sw{width:54px;height:32px;border-radius:16px;border:0;position:relative;cursor:pointer;background:#E5E5EA;transition:background .2s}
+.master .sw.on{background:#34C759}
+.master .sw i{position:absolute;top:3px;left:3px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2);transition:left .2s}
+.master .sw.on i{left:25px}
 
 /* yuqoridagi holat tugmalari (faqat ilova ichida) */
 .hbtn{position:fixed;top:40px;width:40px;height:40px;border-radius:50%;border:0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.08);display:none;align-items:center;justify-content:center;z-index:20;cursor:pointer}
@@ -99,9 +101,10 @@ button{font-family:inherit}
     <div class="hint" id="hint"></div>
     <div class="items" id="items"></div>
   </div>
-  <button class="fab fab-add" id="addBtn" aria-label="Qo'shish">
-    <svg viewBox="0 0 24 24"><path d="M12 4v16m-8-8h16" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg>
-  </button>
+  <div class="master" id="masterBar">
+    <span id="masterLbl">OFF</span>
+    <button class="sw" id="masterSw" aria-label="ON/OFF"><i></i></button>
+  </div>
 </div>
 
 <!-- TRIGGER -->
@@ -226,6 +229,12 @@ function paintState() {
   $('accBtn').className = 'hbtn l acc ' + (state.acc ? 'on' : 'off');
   $('micBtn').className = 'hbtn r mic ' + (state.listening ? 'on' : 'off');
   if ($('floatBtn')) $('floatBtn').className = 'hbtn float ' + (state.float ? 'on' : 'off');
+  var sw = $('masterSw');
+  var lbl = $('masterLbl');
+  if (sw && lbl) {
+    if (state.enabled) { sw.classList.add('on'); lbl.textContent = 'ON'; }
+    else { sw.classList.remove('on'); lbl.textContent = 'OFF'; }
+  }
   var hint = $('hint');
   if (!NATIVE) { hint.textContent = ''; hint.className = 'hint'; return; }
   var L = String(state.lang || 'uz-UZ').split('-')[0].toUpperCase();
@@ -272,6 +281,16 @@ pressable($('micBtn'), function () {
   toast('Til: ' + l);
   pollState();
 });
+
+
+// Master ON/OFF
+$('masterSw').onclick = function () {
+  if (!NATIVE) { toast('Faqat telefonda'); return; }
+  var next = !state.enabled;
+  window.Android.setEnabled(next);
+  setTimeout(pollState, 400);
+  setTimeout(pollState, 1500);
+};
 
 pressable($('floatBtn'), function () {
   if (!NATIVE) return;
@@ -343,13 +362,7 @@ function delMacro(i) {
   armTimer = setTimeout(function () { armed = -1; render(); }, 2200);
 }
 
-// ===================== qo'shish =====================
-$('addBtn').onclick = function () {
-  $('trigIn').value = '';
-  $('goRec').disabled = true;
-  show('triggerPage');
-  setTimeout(function () { $('trigIn').focus(); }, 300);
-};
+// ===================== qo'shish (ilova ichida ham qoladi) =====================
 $('trigBack').onclick = function () { $('trigIn').blur(); show('homePage'); };
 $('trigIn').oninput = function () { $('goRec').disabled = !$('trigIn').value.trim(); };
 $('trigIn').onkeydown = function (e) {
@@ -622,7 +635,10 @@ macros = loadMacros();
 render();
 paintState();
 pollState();
-if (NATIVE) setInterval(pollState, 1200);
+if (NATIVE) {
+  try { window.Android.ensureFloat(); } catch (e) {}
+  setInterval(pollState, 1200);
+}
 
 })();
 </script>
