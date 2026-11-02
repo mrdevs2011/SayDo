@@ -8,6 +8,7 @@ final class Store {
     private static final String PREFS = "voiceflow";
     private static final String K_MACROS = "macros";
     private static final String K_LANG = "lang";
+    private static final String K_ENABLED = "master_on";
 
     static final String[] LANGS = {"uz-UZ", "ru-RU", "en-US"};
 
@@ -39,5 +40,14 @@ final class Store {
         String next = LANGS[(idx + 1) % LANGS.length];
         sp(c).edit().putString(K_LANG, next).commit();
         return next;
+    }
+
+    /** Master ON/OFF — float va tinglash shu bilan boshqariladi. */
+    static boolean isEnabled(Context c) {
+        return sp(c).getBoolean(K_ENABLED, false);
+    }
+
+    static void setEnabled(Context c, boolean on) {
+        sp(c).edit().putBoolean(K_ENABLED, on).commit();
     }
 }

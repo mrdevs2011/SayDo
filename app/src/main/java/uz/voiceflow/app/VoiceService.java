@@ -16,6 +16,7 @@ import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.os.PowerManager;
 import android.widget.Toast;
 
 import org.json.JSONArray;
@@ -39,6 +40,7 @@ public class VoiceService extends Service {
     static volatile boolean running = false;
 
     private final Handler h = new Handler(Looper.getMainLooper());
+    private PowerManager.WakeLock wakeLock;
     private SpeechRecognizer recognizer;
     private boolean destroyed = false;
     private boolean paused = false;      // makro bajarilayotganda tinglamaymiz
@@ -85,6 +87,7 @@ public class VoiceService extends Service {
 
         running = true;
         destroyed = false;
+        acquireWakeLock();
         FloatService.refresh(this);
 
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -107,6 +110,7 @@ public class VoiceService extends Service {
     public void onDestroy() {
         destroyed = true;
         running = false;
+        releaseWakeLock();
         FloatService.refresh(this);
         h.removeCallbacksAndMessages(null);
         destroyRecognizer();

@@ -91,6 +91,9 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         applyImmersive();
+        if (Store.isEnabled(this) && FloatService.canOverlay(this)) {
+            FloatService.show(this);
+        }
         pushState();
     }
 
@@ -178,6 +181,8 @@ public class MainActivity extends Activity {
             o.put("lang", Store.getLang(this));
             o.put("float", FloatService.showing);
             o.put("overlay", FloatService.canOverlay(this));
+            o.put("enabled", Store.isEnabled(this));
+            o.put("recording", FloatService.recording);
             return o.toString();
         } catch (Exception e) {
             return "{}";
@@ -232,6 +237,45 @@ public class MainActivity extends Activity {
         } else if (code == REQ_NOTIF) {
             startListeningFlow();   // bildirishnoma ruxsati rad etilsa ham davom etamiz
         }
+    }
+
+    // ------------------------------------------------------------------ master ON/OFF
+
+    private void applyMaster(boolean on) {
+        Store.setEnabled(this, on);
+        if (on) {
+            if (!FloatService.canOverlay(this)) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName())));
+                    toast("Boshqa ilovalar ustida korsatish ruxsatini yoqing");
+                } catch (Exception e) {
+                    toast("Sozlamalarni ochib bolmadi");
+                }
+            } else {
+                FloatService.show(this);
+            }
+            // Tinglashni ham ishga tushiramiz (ruxsat bo'lsa)
+            startListeningFlow();
+            maybeRequestBatteryOpt();
+        } else {
+            FloatService.hide(this);
+            stopListening();
+        }
+        pushState();
+    }
+
+    private void maybeRequestBatteryOpt() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            String pkg = getPackageName();
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
+                Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + pkg));
+                startActivity(i);
+            }
+        } catch (Exception ignored) { }
     }
 
     // ------------------------------------------------------------------ JS ko'prigi
