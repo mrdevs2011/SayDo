@@ -98,7 +98,7 @@ public class VoiceService extends Service {
         if (recognizer == null) createRecognizer();
         h.removeCallbacks(listenRunnable);
         h.post(listenRunnable);
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
     @Override
@@ -121,8 +121,12 @@ public class VoiceService extends Service {
 
     private void createRecognizer() {
         destroyRecognizer();
-        recognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        recognizer.setRecognitionListener(listener);
+        try {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            if (recognizer != null) recognizer.setRecognitionListener(listener);
+        } catch (Exception e) {
+            recognizer = null;
+        }
     }
 
     private void destroyRecognizer() {
@@ -165,6 +169,15 @@ public class VoiceService extends Service {
 
     private void listen() {
         if (destroyed || paused) return;
+        if (!Store.isEnabled(this)) {
+            stopForeground(true);
+            stopSelf();
+            return;
+        }
+        if (FloatService.recording) {
+            scheduleListen(800);
+            return;
+        }
         loadMacros();
         if (triggers.isEmpty()) {
             updateNotification("Shortcut yo'q — ilovada qo'shing");
@@ -173,6 +186,12 @@ public class VoiceService extends Service {
         }
         if (recognizer == null) createRecognizer();
         try {
+            acquireWakeLock();
+            if (recognizer == null) createRecognizer();
+            if (recognizer == null) {
+                scheduleListen(2000);
+                return;
+            }
             recognizer.startListening(buildIntent());
             updateNotification("Tinglanmoqda · " + langLabel());
         } catch (Exception e) {
@@ -242,7 +261,7 @@ public class VoiceService extends Service {
     };
 
     private boolean handleResults(Bundle b, double threshold) {
-        if (b == null || destroyed || paused) return false;
+        if (b == null || destroyed || paused || FloatService.recording) return false;
         ArrayList<String> heard = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         if (heard == null || heard.isEmpty()) return false;
         if (System.currentTimeMillis() < cooldownUntil) return false;
@@ -255,7 +274,9 @@ public class VoiceService extends Service {
     // ------------------------------------------------------------- makro ishga tushirish
 
     private void fire(int idx) {
+        if (paused || destroyed || idx < 0 || idx >= macros.size()) return;
         final JSONObject m = macros.get(idx);
+        if (m == null) return;
         final String name = m.optString("trigger", "");
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
         paused = true;
