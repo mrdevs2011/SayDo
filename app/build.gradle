@@ -17,9 +17,9 @@ android {
     signingConfigs {
         release {
             storeFile file(System.getenv('VF_KEYSTORE') ?: '../keystore/saydo.jks')
-            storePassword System.getenv('VF_STORE_PASS') ?: 'saydo123'
-            keyAlias System.getenv('VF_KEY_ALIAS') ?: 'saydo'
-            keyPassword System.getenv('VF_KEY_PASS') ?: 'saydo123'
+            storePassword System.getenv('VF_STORE_PASS') ?: 'voiceflow123'
+            keyAlias System.getenv('VF_KEY_ALIAS') ?: 'voiceflow'
+            keyPassword System.getenv('VF_KEY_PASS') ?: 'voiceflow123'
         }
     }
 
