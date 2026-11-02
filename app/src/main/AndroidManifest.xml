@@ -23,7 +23,8 @@
         android:label="@string/app_name"
         android:supportsRtl="false"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:extractNativeLibs="false">
 
         <activity
             android:name=".MainActivity"
@@ -47,7 +48,8 @@
             android:name=".GestureService"
             android:exported="true"
             android:label="@string/app_name"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:isAccessibilityTool="true">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
