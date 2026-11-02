@@ -26,11 +26,10 @@ import org.json.JSONObject;
 
 /**
  * Interfeys (assets/index.html) WebView ichida ishlaydi.
- * "Android" nomli JS ko'prigi orqali makrolar saqlanadi, servislar boshqariladi.
+ * "Android" JS ko'prigi orqali makrolar saqlanadi, servislar boshqariladi.
  */
 public class MainActivity extends Activity {
 
-    /** Ilova ekranda ko'rinib turgan paytdagina null emas. */
     static volatile MainActivity current;
 
     private static final int REQ_AUDIO = 101;
@@ -38,11 +37,13 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private boolean askedNotif = false;
+    private boolean destroyed = false;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        destroyed = false;
 
         web = new WebView(this);
         web.setBackgroundColor(0xFFF5F5F5);
@@ -58,17 +59,21 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
-        s.setAllowFileAccess(false);          // assets baribir ochiladi
+        s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
         s.setBuiltInZoomControls(false);
+        s.setDisplayZoomControls(false);
         s.setSupportZoom(false);
         s.setTextZoom(100);
+        if (Build.VERSION.SDK_INT >= 26) {
+            s.setSafeBrowsingEnabled(false);
+        }
 
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                // Faqat o'z sahifamiz; tashqi havolalarga o'tmaymiz.
-                return !request.getUrl().toString().startsWith("file:///android_asset/");
+                return request == null || request.getUrl() == null
+                        || !request.getUrl().toString().startsWith("file:///android_asset/");
             }
         });
         web.addJavascriptInterface(new Bridge(), "Android");
@@ -78,8 +83,6 @@ public class MainActivity extends Activity {
         web.loadUrl("file:///android_asset/index.html");
         applyImmersive();
     }
-
-    // ------------------------------------------------------------------ hayot sikli
 
     @Override
     protected void onStart() {
@@ -91,8 +94,14 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         applyImmersive();
+        // Overlay ruxsati berilgan bo'lsa — float ni qayta ko'rsat
         if (Store.isEnabled(this) && FloatService.canOverlay(this)) {
             FloatService.show(this);
+            // Master ON, lekin tinglash to'xtagan bo'lsa — qayta ishga tushirish
+            if (!VoiceService.running
+                    && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                startListeningFlow();
+            }
         }
         pushState();
     }
@@ -105,10 +114,16 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        destroyed = true;
         if (current == this) current = null;
         if (web != null) {
-            web.removeJavascriptInterface("Android");
-            web.destroy();
+            try { web.removeJavascriptInterface("Android"); } catch (Exception ignored) { }
+            try {
+                web.loadUrl("about:blank");
+                web.stopLoading();
+                web.setWebViewClient(null);
+                web.destroy();
+            } catch (Exception ignored) { }
             web = null;
         }
         super.onDestroy();
@@ -123,53 +138,57 @@ public class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     @Override
     public void onBackPressed() {
-        if (web == null) {
+        if (web == null || destroyed) {
             super.onBackPressed();
             return;
         }
-        web.evaluateJavascript(
-                "(function(){try{return window.vfBack?window.vfBack():false}catch(e){return false}})()",
-                new android.webkit.ValueCallback<String>() {
-                    @Override
-                    public void onReceiveValue(String v) {
-                        if (!"true".equals(v)) moveTaskToBack(true);
-                    }
-                });
+        try {
+            web.evaluateJavascript(
+                    "(function(){try{return window.vfBack?window.vfBack():false}catch(e){return false}})()",
+                    new android.webkit.ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String v) {
+                            if (!"true".equals(v) && !destroyed) moveTaskToBack(true);
+                        }
+                    });
+        } catch (Exception e) {
+            moveTaskToBack(true);
+        }
     }
-
-    // ------------------------------------------------------------------ to'liq ekran
 
     @SuppressWarnings("deprecation")
     private void applyImmersive() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            WindowInsetsController c = getWindow().getInsetsController();
-            if (c != null) {
-                c.hide(WindowInsets.Type.systemBars());
-                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController c = getWindow().getInsetsController();
+                if (c != null) {
+                    c.hide(WindowInsets.Type.systemBars());
+                    c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                }
+            } else {
+                getWindow().getDecorView().setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
             }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-        }
+        } catch (Exception ignored) { }
     }
 
-    // ------------------------------------------------------------------ holat
-
     private boolean isAccessibilityEnabled() {
-        if (GestureService.instance != null) return true;
-        String enabled = Settings.Secure.getString(
-                getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        if (enabled == null || enabled.isEmpty()) return false;
-        ComponentName me = new ComponentName(this, GestureService.class);
-        for (String part : enabled.split(":")) {
-            ComponentName c = ComponentName.unflattenFromString(part);
-            if (me.equals(c)) return true;
-        }
+        try {
+            if (GestureService.instance != null) return true;
+            String enabled = Settings.Secure.getString(
+                    getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (enabled == null || enabled.isEmpty()) return false;
+            ComponentName me = new ComponentName(this, GestureService.class);
+            for (String part : enabled.split(":")) {
+                ComponentName c = ComponentName.unflattenFromString(part);
+                if (me.equals(c)) return true;
+            }
+        } catch (Exception ignored) { }
         return false;
     }
 
@@ -190,17 +209,24 @@ public class MainActivity extends Activity {
     }
 
     private void pushState() {
-        if (web == null) return;
-        web.evaluateJavascript("window.vfState&&window.vfState(" + stateJson() + ")", null);
+        if (web == null || destroyed) return;
+        try {
+            web.evaluateJavascript("window.vfState&&window.vfState(" + stateJson() + ")", null);
+        } catch (Exception ignored) { }
     }
 
-    private void toast(String m) {
-        Toast.makeText(this, m, Toast.LENGTH_SHORT).show();
+    private void toast(final String m) {
+        if (destroyed || m == null) return;
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (!destroyed) Toast.makeText(MainActivity.this, m, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
-
-    // ------------------------------------------------------------------ tinglash
 
     private void startListeningFlow() {
+        if (destroyed) return;
+        if (!Store.isEnabled(this)) return;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
             return;
@@ -212,7 +238,9 @@ public class MainActivity extends Activity {
             return;
         }
         try {
-            startForegroundService(new Intent(this, VoiceService.class));
+            Intent i = new Intent(this, VoiceService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
         } catch (Exception e) {
             toast("Tinglashni boshlab bo'lmadi");
         }
@@ -220,7 +248,7 @@ public class MainActivity extends Activity {
     }
 
     private void stopListening() {
-        stopService(new Intent(this, VoiceService.class));
+        try { stopService(new Intent(this, VoiceService.class)); } catch (Exception ignored) { }
         VoiceService.running = false;
         pushState();
     }
@@ -228,34 +256,33 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
+        if (destroyed) return;
         if (code == REQ_AUDIO) {
-            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            if (results != null && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 startListeningFlow();
             } else {
                 toast("Mikrofon ruxsati kerak");
             }
         } else if (code == REQ_NOTIF) {
-            startListeningFlow();   // bildirishnoma ruxsati rad etilsa ham davom etamiz
+            startListeningFlow();
         }
     }
 
-    // ------------------------------------------------------------------ master ON/OFF
-
     private void applyMaster(boolean on) {
+        if (destroyed) return;
         Store.setEnabled(this, on);
         if (on) {
             if (!FloatService.canOverlay(this)) {
                 try {
                     startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                             Uri.parse("package:" + getPackageName())));
-                    toast("Boshqa ilovalar ustida korsatish ruxsatini yoqing");
+                    toast("Boshqa ilovalar ustida ko'rsatish ruxsatini yoqing");
                 } catch (Exception e) {
-                    toast("Sozlamalarni ochib bolmadi");
+                    toast("Sozlamalarni ochib bo'lmadi");
                 }
             } else {
                 FloatService.show(this);
             }
-            // Tinglashni ham ishga tushiramiz (ruxsat bo'lsa)
             startListeningFlow();
             maybeRequestBatteryOpt();
         } else {
@@ -271,14 +298,11 @@ public class MainActivity extends Activity {
             String pkg = getPackageName();
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
             if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
-                Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:" + pkg));
-                startActivity(i);
+                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + pkg)));
             }
         } catch (Exception ignored) { }
     }
-
-    // ------------------------------------------------------------------ JS ko'prigi
 
     private final class Bridge {
 
@@ -297,11 +321,11 @@ public class MainActivity extends Activity {
             return stateJson();
         }
 
-        /** @return 0 — boshlandi, 1 — Accessibility yoqilmagan, 2 — noto'g'ri makro */
         @JavascriptInterface
         public int run(int index) {
             try {
                 JSONArray arr = new JSONArray(Store.getMacros(MainActivity.this));
+                if (index < 0 || index >= arr.length()) return Runner.INVALID;
                 JSONObject m = arr.optJSONObject(index);
                 return Runner.run(MainActivity.this, m, null);
             } catch (Exception e) {
@@ -313,8 +337,15 @@ public class MainActivity extends Activity {
         public void toggleListening() {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
+                    if (destroyed) return;
                     if (VoiceService.running) stopListening();
-                    else startListeningFlow();
+                    else {
+                        if (!Store.isEnabled(MainActivity.this)) {
+                            toast("Avval ON qiling");
+                            return;
+                        }
+                        startListeningFlow();
+                    }
                 }
             });
         }
@@ -328,6 +359,7 @@ public class MainActivity extends Activity {
         public void openAccessibility() {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
+                    if (destroyed) return;
                     try {
                         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
                     } catch (Exception e) {
@@ -337,15 +369,14 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** Android 13+ da yoqib bo'lmasa: Ilova ma'lumotlari → ⋮ → "Cheklangan sozlamalarga ruxsat". */
         @JavascriptInterface
         public void openAppInfo() {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
+                    if (destroyed) return;
                     try {
-                        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.parse("package:" + getPackageName()));
-                        startActivity(i);
+                        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName())));
                     } catch (Exception e) {
                         toast("Sozlamalarni ochib bo'lmadi");
                     }
@@ -353,31 +384,50 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** Suzuvchi tugmani yoqish/o'chirish. Overlay ruxsati yo'q bo'lsa sozlamani ochadi. */
+        @JavascriptInterface
+        public void setEnabled(final boolean on) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (!destroyed) applyMaster(on);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void ensureFloat() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (destroyed) return;
+                    if (Store.isEnabled(MainActivity.this) && FloatService.canOverlay(MainActivity.this)) {
+                        FloatService.show(MainActivity.this);
+                    }
+                    pushState();
+                }
+            });
+        }
+
         @JavascriptInterface
         public void toggleFloat() {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
+                    if (destroyed) return;
                     if (!FloatService.canOverlay(MainActivity.this)) {
                         try {
-                            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    Uri.parse("package:" + getPackageName()));
-                            startActivity(i);
-                            toast("Boshqa ilovalar ustida korsatish ruxsatini yoqing");
+                            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName())));
+                            toast("Boshqa ilovalar ustida ko'rsatish ruxsatini yoqing");
                         } catch (Exception e) {
                             toast("Sozlamalarni ochib bo'lmadi");
                         }
                         return;
                     }
-                    if (FloatService.showing) {
-                        FloatService.hide(MainActivity.this);
-                    } else {
-                        FloatService.show(MainActivity.this);
+                    if (FloatService.showing) FloatService.hide(MainActivity.this);
+                    else FloatService.show(MainActivity.this);
+                    if (web != null) {
+                        web.postDelayed(new Runnable() {
+                            @Override public void run() { pushState(); }
+                        }, 300);
                     }
-                    // Holatni biroz kechiktirib yangilaymiz
-                    web.postDelayed(new Runnable() {
-                        @Override public void run() { pushState(); }
-                    }, 300);
                 }
             });
         }

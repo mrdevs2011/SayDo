@@ -50,6 +50,8 @@ public class FloatService extends Service {
 
     private static final int SIZE_DP = 58;
     private static final int MARGIN_DP = 10;
+    private static final int MAX_GESTURES = 200;
+    private static final int MAX_PATH_POINTS = 500;
 
     private final Handler h = new Handler(Looper.getMainLooper());
     private WindowManager wm;
@@ -95,6 +97,10 @@ public class FloatService extends Service {
         }
 
         if (!Settings.canDrawOverlays(this)) {
+            stopRecording(false);
+            removeBubble();
+            showing = false;
+            recording = false;
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -251,13 +257,24 @@ public class FloatService extends Service {
     private void onBubbleTap() {
         if (recording) {
             stopRecording(true);
-        } else {
-            // Trigger so'zi uchun activity ochamiz (klaviatura ishonchli ishlashi uchun)
+            return;
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            toast("Overlay ruxsati yo'q");
+            return;
+        }
+        if (!Store.isEnabled(this)) {
+            toast("Avval ON qiling");
+            return;
+        }
+        try {
             Intent i = new Intent(this, TriggerActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                             | Intent.FLAG_ACTIVITY_CLEAR_TOP
                             | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             startActivity(i);
+        } catch (Exception e) {
+            toast("Ochib bo'lmadi");
         }
     }
 
@@ -270,6 +287,10 @@ public class FloatService extends Service {
     // ============================================================ recording
 
     private void beginRecording(String trigger) {
+        if (trigger == null) return;
+        trigger = trigger.trim();
+        if (trigger.isEmpty()) return;
+        if (trigger.length() > 60) trigger = trigger.substring(0, 60);
         if (recording) stopRecording(false);
         pendingTrigger = trigger;
         gestures.clear();
@@ -374,7 +395,9 @@ public class FloatService extends Service {
                 long d = now - strokeStartElapsed;
                 curStroke.put("type", d >= 400 ? "hold" : "tap");
             }
-            gestures.add(curStroke);
+            if (gestures.size() < MAX_GESTURES) {
+                gestures.add(curStroke);
+            }
         } catch (Exception ignored) { }
         curStroke = null;
         curPath = null;
@@ -458,7 +481,7 @@ public class FloatService extends Service {
                     lastX = x;
                     lastY = y;
                     livePath.lineTo(x, y);
-                    if (curPath != null) {
+                    if (curPath != null && curPath.length() < MAX_PATH_POINTS) {
                         try {
                             JSONObject p = new JSONObject();
                             p.put("x", nx);
