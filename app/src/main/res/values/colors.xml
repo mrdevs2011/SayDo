@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#FFF5F5F5</color>
-    <color name="ic_launcher_background">#FF0B0B0F</color>
+    <color name="bg">#F2F2F7</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text_primary">#1C1C1E</color>
+    <color name="text_secondary">#8E8E93</color>
+    <color name="accent">#007AFF</color>
+    <color name="success">#34C759</color>
+    <color name="danger">#FF3B30</color>
+    <color name="chip_off">#E5E5EA</color>
+    <color name="divider">#E5E5EA</color>
 </resources>
