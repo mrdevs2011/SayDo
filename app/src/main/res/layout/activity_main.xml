@@ -65,18 +65,6 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp"
                     android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/chipMic"
-                    android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:background="@drawable/bg_chip"
-                    android:gravity="center"
-                    android:paddingHorizontal="14dp"
-                    android:text="Microphone"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
             </LinearLayout>
         </HorizontalScrollView>
 

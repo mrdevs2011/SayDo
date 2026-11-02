@@ -43,7 +43,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     private RecyclerView list;
     private View empty;
-    private TextView hint, chipAcc, chipMic, masterLabel;
+    private TextView hint, chipAcc, masterLabel;
     private SwitchMaterial masterSwitch;
     private MacroAdapter adapter;
     private JSONArray macros = new JSONArray();
@@ -66,7 +66,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         empty = findViewById(R.id.empty);
         hint = findViewById(R.id.hint);
         chipAcc = findViewById(R.id.chipAcc);
-        chipMic = findViewById(R.id.chipMic);
         masterLabel = findViewById(R.id.masterLabel);
         masterSwitch = findViewById(R.id.masterSwitch);
         ImageButton btnSettings = findViewById(R.id.btnSettings);
@@ -92,15 +91,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         chipAcc.setOnLongClickListener(v -> {
             openAppInfo();
             return true;
-        });
-
-        chipMic.setOnClickListener(v -> {
-            if (!Store.isEnabled(this)) {
-                toast("Turn ON first");
-                return;
-            }
-            if (VoiceService.running) stopListening();
-            else startListeningFlow();
         });
 
         btnSettings.setOnClickListener(v -> openAppInfo());
@@ -176,7 +166,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         boolean listening = VoiceService.running;
         boolean enabled = Store.isEnabled(this);
         styleChip(chipAcc, acc, "Accessibility", !acc);
-        styleChip(chipMic, listening, listening ? "Listening" : "Microphone", false);
 
         if (!acc) {
             hint.setText("Enable Accessibility to run actions");
