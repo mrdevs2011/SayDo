@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoiceFlow</string>
+    <string name="acc_desc">VoiceFlow siz yozib olgan tap, ushlab turish va slide harakatlarini ekranda sizning o\'rningizga bajaradi. Faqat siz aytgan trigger so\'zi yoki tugma bosilganda ishlaydi. Ekrandagi matnlar o\'qilmaydi va hech qayerga yuborilmaydi.</string>
+</resources>

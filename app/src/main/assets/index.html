@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>VoiceFlow</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;background:#f5f5f5;color:#1c1c1e;height:100%;width:100%;overflow:hidden;position:fixed;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+button{font-family:inherit}
+
+.page{position:absolute;inset:0;display:none;flex-direction:column}
+.page.active{display:flex}
+
+/* ===== HOME ===== */
+.home{padding:44px 20px 130px;overflow-y:auto;height:100%}
+.home h1{font-size:26px;font-weight:700;text-align:center;line-height:44px}
+.hint{text-align:center;font-size:12px;color:#8e8e93;margin:2px 0 18px;min-height:16px}
+.hint.bad{color:#FF3B30}
+.hint.good{color:#34C759}
+.items{display:flex;flex-direction:column;gap:10px}
+.item{background:#fff;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+.item .txt{flex:1;min-width:0}
+.item .txt h3{font-size:16px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .txt span{font-size:12px;color:#8e8e93}
+.ibtn{width:40px;height:40px;border-radius:50%;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ibtn svg{width:18px;height:18px}
+.ibtn.play{background:#34C759}.ibtn.play svg{fill:#fff}
+.ibtn.del{background:#FF3B30}
+.ibtn.del.armed{background:#b3130b;box-shadow:0 0 0 4px rgba(255,59,48,.25)}
+.empty{text-align:center;color:#aaa;padding:80px 20px;font-size:15px;line-height:1.6}
+
+.fab{position:fixed;width:58px;height:58px;border-radius:50%;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.fab:active{transform:translateX(-50%) scale(.92)}
+.fab-add{bottom:34px;left:50%;transform:translateX(-50%);background:#007AFF}
+.fab svg{width:26px;height:26px}
+
+/* yuqoridagi holat tugmalari (faqat ilova ichida) */
+.hbtn{position:fixed;top:40px;width:40px;height:40px;border-radius:50%;border:0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.08);display:none;align-items:center;justify-content:center;z-index:20;cursor:pointer}
+.native .hbtn{display:flex}
+.hbtn.l{left:16px}
+.hbtn.r{right:16px}
+.hbtn svg{width:20px;height:20px}
+.hbtn.acc.on{color:#34C759}
+.hbtn.acc.off{color:#FF3B30}
+.hbtn.mic.on{color:#fff;background:#34C759}
+.hbtn.mic.off{color:#8e8e93}
+.hbtn.mic.on::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid rgba(52,199,89,.35);animation:pu 1.6s infinite}
+@keyframes pu{0%{transform:scale(.9);opacity:1}100%{transform:scale(1.25);opacity:0}}
+
+/* ===== TRIGGER ===== */
+.trigger{justify-content:flex-start;align-items:center;padding:24vh 28px 0}
+.trigger .back{position:absolute;top:40px;left:14px;width:44px;height:44px;background:none;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.trigger .back svg{width:28px;height:28px}
+.tbox{width:100%;max-width:340px;text-align:center}
+.tbox h2{font-size:20px;font-weight:700;margin-bottom:20px}
+.tbox input{width:100%;padding:16px;border-radius:14px;border:2px solid #e0e0e0;font-size:17px;text-align:center;outline:none;font-family:inherit;-webkit-user-select:text;user-select:text;background:#fff}
+.tbox input:focus{border-color:#007AFF}
+.tbox .go{margin-top:16px;width:100%;padding:15px;border-radius:14px;background:#007AFF;color:#fff;border:0;font-size:17px;font-weight:600;cursor:pointer}
+.tbox .go:disabled{background:#ccc}
+
+/* ===== RECORD (to'liq qora, hech qanday header yo'q) ===== */
+.rec-page{background:#000;position:absolute;inset:0;overflow:hidden}
+.cancel-float{position:absolute;bottom:40px;left:20px;width:46px;height:46px;border-radius:50%;background:rgba(255,255,255,.12);border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:50}
+.cancel-float svg{width:20px;height:20px;pointer-events:none}
+.save-float{position:absolute;bottom:40px;right:20px;width:56px;height:56px;border-radius:50%;background:#34C759;border:0;cursor:grab;display:flex;align-items:center;justify-content:center;z-index:50;box-shadow:0 4px 16px rgba(52,199,89,.45);touch-action:none}
+.save-float svg{width:26px;height:26px;pointer-events:none}
+
+/* ===== REPLAY (ilova ichida ko'rib chiqish) ===== */
+.replay{position:fixed;inset:0;background:#000;display:none;z-index:100}
+.replay.active{display:block}
+.replay canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.replay-info{position:absolute;top:44px;left:50%;transform:translateX(-50%);color:#fff;font-size:15px;font-weight:600;z-index:10;text-align:center;pointer-events:none;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.replay-x{position:absolute;top:38px;right:18px;width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.14);border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10}
+.replay-x svg{width:18px;height:18px}
+
+.toast{position:fixed;bottom:110px;left:50%;transform:translateX(-50%) translateY(20px);background:#1c1c1e;color:#fff;padding:10px 20px;border-radius:22px;font-size:13px;max-width:88%;text-align:center;opacity:0;transition:.3s;z-index:300;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<!-- HOME -->
+<div class="page active" id="homePage">
+  <button class="hbtn l acc off" id="accBtn" aria-label="Accessibility">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.8" fill="currentColor"/></svg>
+  </button>
+  <button class="hbtn r mic off" id="micBtn" aria-label="Ovoz">
+    <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+  </button>
+  <div class="home">
+    <h1>VoiceFlow</h1>
+    <div class="hint" id="hint"></div>
+    <div class="items" id="items"></div>
+  </div>
+  <button class="fab fab-add" id="addBtn" aria-label="Qo'shish">
+    <svg viewBox="0 0 24 24"><path d="M12 4v16m-8-8h16" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg>
+  </button>
+</div>
+
+<!-- TRIGGER -->
+<div class="page trigger" id="triggerPage">
+  <button class="back" id="trigBack" aria-label="Orqaga">
+    <svg viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" stroke="#007AFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+  </button>
+  <div class="tbox">
+    <h2>Trigger so'zni yozing</h2>
+    <input type="text" id="trigIn" placeholder="Masalan: YouTube och" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="60">
+    <button class="go" id="goRec" disabled>Yozishni boshlash</button>
+  </div>
+</div>
+
+<!-- RECORD -->
+<div class="page rec-page" id="recPage">
+  <canvas id="recCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;z-index:10"></canvas>
+  <button class="cancel-float" id="recCancel" aria-label="Bekor qilish">
+    <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+  </button>
+  <button class="save-float" id="saveBtn" aria-label="Saqlash">
+    <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+  </button>
+</div>
+
+<!-- REPLAY -->
+<div class="replay" id="replayBox">
+  <canvas id="repCanvas"></canvas>
+  <div class="replay-info" id="repInfo"></div>
+  <button class="replay-x" id="repClose" aria-label="Yopish">
+    <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+  </button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+'use strict';
+
+var NATIVE = typeof window.Android !== 'undefined';
+if (NATIVE) document.body.classList.add('native');
+
+var $ = function (id) { return document.getElementById(id); };
+var canvas = $('recCanvas');
+var ctx = canvas.getContext('2d');
+
+var macros = [];
+var state = { acc: false, listening: false, lang: 'uz-UZ' };
+var currentTrigger = '';
+var recording = false;
+var gestures = [];
+var recStart = 0;
+var activeId = null;
+var stroke = [];
+var cw = 0, ch = 0;
+var repTok = 0;
+var armed = -1, armTimer = null;
+var toastTimer = null;
+
+var ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+var ICON_DEL = '<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/></svg>';
+
+document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+// ===================== yordamchi =====================
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function r5(n) { return Math.round(n * 100000) / 100000; }
+function slp(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+function toast(m) {
+  var t = $('toast');
+  t.textContent = m;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
+}
+
+function show(id) {
+  var pages = document.querySelectorAll('.page');
+  for (var i = 0; i < pages.length; i++) pages[i].classList.remove('active');
+  $(id).classList.add('active');
+}
+
+/** Bosish va uzoq bosishni ajratadi. */
+function pressable(el, onTap, onLong) {
+  var t = null, isLong = false, down = false;
+  el.addEventListener('pointerdown', function () {
+    down = true; isLong = false;
+    clearTimeout(t);
+    t = setTimeout(function () { isLong = true; if (onLong) onLong(); }, 650);
+  });
+  el.addEventListener('pointerup', function () {
+    clearTimeout(t);
+    if (down && !isLong && onTap) onTap();
+    down = false;
+  });
+  el.addEventListener('pointercancel', function () { clearTimeout(t); down = false; });
+  el.addEventListener('pointerleave', function () { clearTimeout(t); down = false; });
+}
+
+// ===================== saqlash =====================
+function loadMacros() {
+  try {
+    var raw = NATIVE ? window.Android.getMacros() : localStorage.getItem('vf3');
+    var a = JSON.parse(raw || '[]');
+    return Array.isArray(a) ? a : [];
+  } catch (e) { return []; }
+}
+function saveMacros() {
+  var j = JSON.stringify(macros);
+  try {
+    if (NATIVE) window.Android.saveMacros(j);
+    else localStorage.setItem('vf3', j);
+  } catch (e) { toast('Saqlashda xatolik'); }
+}
+
+// ===================== holat (Accessibility / ovoz) =====================
+function paintState() {
+  $('accBtn').className = 'hbtn l acc ' + (state.acc ? 'on' : 'off');
+  $('micBtn').className = 'hbtn r mic ' + (state.listening ? 'on' : 'off');
+  var hint = $('hint');
+  if (!NATIVE) { hint.textContent = ''; hint.className = 'hint'; return; }
+  var L = String(state.lang || 'uz-UZ').split('-')[0].toUpperCase();
+  if (!state.acc) {
+    hint.textContent = 'Harakatlar uchun Accessibility yoqing';
+    hint.className = 'hint bad';
+  } else if (state.listening) {
+    hint.textContent = 'Tinglanmoqda \u00b7 ' + L;
+    hint.className = 'hint good';
+  } else {
+    hint.textContent = "Ovoz o'chiq \u00b7 " + L;
+    hint.className = 'hint';
+  }
+}
+window.vfState = function (s) {
+  if (s && typeof s === 'object') {
+    for (var k in s) state[k] = s[k];
+    paintState();
+  }
+};
+function pollState() {
+  if (!NATIVE) return;
+  try { window.vfState(JSON.parse(window.Android.getState())); } catch (e) {}
+}
+
+pressable($('accBtn'), function () {
+  if (!state.acc) {
+    toast('VoiceFlow ni yoqing');
+    window.Android.openAccessibility();
+  } else {
+    toast('Accessibility yoqilgan');
+  }
+}, function () {
+  toast("Ilova ma'lumotlari ochilmoqda");
+  window.Android.openAppInfo();
+});
+
+pressable($('micBtn'), function () {
+  window.Android.toggleListening();
+  setTimeout(pollState, 500);
+  setTimeout(pollState, 1500);
+}, function () {
+  var l = window.Android.cycleLang();
+  toast('Til: ' + l);
+  pollState();
+});
+
+// ===================== ro'yxat =====================
+function render() {
+  var el = $('items');
+  if (!macros.length) {
+    el.innerHTML = '<div class="empty">Hali shortcut yo\'q<br>+ tugmasini bosing</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < macros.length; i++) {
+    var m = macros[i];
+    var n = (m.gestures || []).length;
+    var secs = ((m.dur || 0) / 1000).toFixed(1);
+    html += '<div class="item" data-i="' + i + '">' +
+      '<div class="txt" data-act="prev"><h3>' + esc(m.trigger) + '</h3><span>' + n + ' harakat \u00b7 ' + secs + 's</span></div>' +
+      '<button class="ibtn play" data-act="run" aria-label="Bajarish">' + ICON_PLAY + '</button>' +
+      '<button class="ibtn del' + (armed === i ? ' armed' : '') + '" data-act="del" aria-label="O\'chirish">' + ICON_DEL + '</button>' +
+      '</div>';
+  }
+  el.innerHTML = html;
+}
+
+$('items').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-act]');
+  if (!b) return;
+  var item = b.closest('.item');
+  if (!item) return;
+  var i = parseInt(item.getAttribute('data-i'), 10);
+  var act = b.getAttribute('data-act');
+  if (act === 'prev') preview(i);
+  else if (act === 'run') runMacro(i);
+  else if (act === 'del') delMacro(i);
+});
+
+function runMacro(i) {
+  if (!NATIVE) { preview(i); return; }
+  var r = window.Android.run(i);
+  if (r === 1) {
+    toast('Avval Accessibility ni yoqing');
+    window.Android.openAccessibility();
+  } else if (r === 2) {
+    toast('Shortcut topilmadi');
+  }
+}
+
+function delMacro(i) {
+  if (armed === i) {
+    clearTimeout(armTimer);
+    armed = -1;
+    macros.splice(i, 1);
+    saveMacros();
+    render();
+    toast("O'chirildi");
+    return;
+  }
+  armed = i;
+  render();
+  toast("O'chirish uchun yana bosing");
+  clearTimeout(armTimer);
+  armTimer = setTimeout(function () { armed = -1; render(); }, 2200);
+}
+
+// ===================== qo'shish =====================
+$('addBtn').onclick = function () {
+  $('trigIn').value = '';
+  $('goRec').disabled = true;
+  show('triggerPage');
+  setTimeout(function () { $('trigIn').focus(); }, 300);
+};
+$('trigBack').onclick = function () { $('trigIn').blur(); show('homePage'); };
+$('trigIn').oninput = function () { $('goRec').disabled = !$('trigIn').value.trim(); };
+$('trigIn').onkeydown = function (e) {
+  if (e.key === 'Enter' && $('trigIn').value.trim()) beginRec();
+};
+$('goRec').onclick = beginRec;
+
+// ===================== yozib olish =====================
+function fitCanvas() {
+  var dpr = window.devicePixelRatio || 1;
+  cw = window.innerWidth;
+  ch = window.innerHeight;
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', function () {
+  if (recording && (window.innerWidth !== cw || window.innerHeight !== ch)) fitCanvas();
+});
+
+function beginRec() {
+  currentTrigger = $('trigIn').value.trim();
+  if (!currentTrigger) return;
+  $('trigIn').blur();
+  gestures = [];
+  recording = true;
+  activeId = null;
+  stroke = [];
+  recStart = performance.now();
+
+  var sb = $('saveBtn');
+  sb.style.left = ''; sb.style.top = '';
+  sb.style.right = '20px'; sb.style.bottom = '40px';
+
+  show('recPage');
+  requestAnimationFrame(function () {
+    fitCanvas();
+    ctx.clearRect(0, 0, cw, ch);
+  });
+}
+
+$('recCancel').onclick = cancelRec;
+function cancelRec() {
+  recording = false;
+  activeId = null;
+  stroke = [];
+  show('homePage');
+}
+
+function pos(e) {
+  return {
+    x: e.clientX / window.innerWidth,
+    y: e.clientY / window.innerHeight,
+    px: e.clientX,
+    py: e.clientY,
+    t: performance.now() - recStart
+  };
+}
+function dot(x, y, r, color) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+canvas.addEventListener('pointerdown', function (e) {
+  if (!recording || activeId !== null) return;
+  e.preventDefault();
+  activeId = e.pointerId;
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  var p = pos(e);
+  stroke = [p];
+  dot(p.px, p.py, 7, 'rgba(0,122,255,.85)');
+}, { passive: false });
+
+canvas.addEventListener('pointermove', function (e) {
+  if (!recording || e.pointerId !== activeId) return;
+  e.preventDefault();
+  var p = pos(e);
+  var prev = stroke[stroke.length - 1];
+  stroke.push(p);
+  ctx.beginPath();
+  ctx.moveTo(prev.px, prev.py);
+  ctx.lineTo(p.px, p.py);
+  ctx.strokeStyle = 'rgba(0,122,255,.6)';
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+}, { passive: false });
+
+canvas.addEventListener('pointerup', function (e) {
+  if (!recording || e.pointerId !== activeId) return;
+  e.preventDefault();
+  var p = pos(e);
+  stroke.push(p);
+  dot(p.px, p.py, 5, 'rgba(255,59,48,.85)');
+  finishStroke();
+}, { passive: false });
+
+canvas.addEventListener('pointercancel', function (e) {
+  if (e.pointerId === activeId) { activeId = null; stroke = []; }
+});
+
+/** Hozirgi chiziqni gest sifatida saqlaydi: tap / hold / swipe. */
+function finishStroke() {
+  if (activeId === null || !stroke.length) { activeId = null; stroke = []; return; }
+  var first = stroke[0];
+  var last = stroke[stroke.length - 1];
+  var maxMove = 0;
+  for (var i = 0; i < stroke.length; i++) {
+    var d = Math.hypot(stroke[i].px - first.px, stroke[i].py - first.py);
+    if (d > maxMove) maxMove = d;
+  }
+  var dur = last.t - first.t;
+  var g;
+  if (maxMove < 14) {
+    g = {
+      type: dur < 350 ? 'tap' : 'hold',
+      x: r5(first.x), y: r5(first.y),
+      st: Math.round(first.t), et: Math.round(last.t), dur: Math.round(dur)
+    };
+  } else {
+    var path = [];
+    for (var j = 0; j < stroke.length; j++) {
+      path.push({ x: r5(stroke[j].x), y: r5(stroke[j].y), t: Math.round(stroke[j].t) });
+    }
+    g = { type: 'swipe', path: path, st: Math.round(first.t), et: Math.round(last.t), dur: Math.round(dur) };
+  }
+  gestures.push(g);
+  stroke = [];
+  activeId = null;
+}
+
+// ===================== suzuvchi saqlash tugmasi =====================
+var sBtn = $('saveBtn');
+var sDown = false, sMoved = false, sx0 = 0, sy0 = 0, sOffX = 0, sOffY = 0;
+
+sBtn.addEventListener('pointerdown', function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+  sDown = true; sMoved = false;
+  sx0 = e.clientX; sy0 = e.clientY;
+  var r = sBtn.getBoundingClientRect();
+  sOffX = e.clientX - r.left;
+  sOffY = e.clientY - r.top;
+  try { sBtn.setPointerCapture(e.pointerId); } catch (_) {}
+}, { passive: false });
+
+sBtn.addEventListener('pointermove', function (e) {
+  if (!sDown) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (!sMoved && Math.hypot(e.clientX - sx0, e.clientY - sy0) < 10) return;
+  sMoved = true;
+  var w = sBtn.offsetWidth, h = sBtn.offsetHeight;
+  var l = Math.max(0, Math.min(window.innerWidth - w, e.clientX - sOffX));
+  var t = Math.max(0, Math.min(window.innerHeight - h, e.clientY - sOffY));
+  sBtn.style.right = 'auto';
+  sBtn.style.bottom = 'auto';
+  sBtn.style.left = l + 'px';
+  sBtn.style.top = t + 'px';
+}, { passive: false });
+
+sBtn.addEventListener('pointerup', function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+  var wasDown = sDown;
+  sDown = false;
+  if (wasDown && !sMoved) doSave();
+}, { passive: false });
+
+sBtn.addEventListener('pointercancel', function () { sDown = false; });
+
+function doSave() {
+  if (activeId !== null) finishStroke();
+  if (!gestures.length) { toast('Hech narsa yozilmadi'); return; }
+  recording = false;
+  var startT = gestures[0].st;
+  var endT = gestures[gestures.length - 1].et;
+  macros.push({
+    trigger: currentTrigger,
+    gestures: gestures,
+    dur: Math.max(0, endT - startT),
+    ts: Date.now()
+  });
+  saveMacros();
+  render();
+  show('homePage');
+  toast('"' + currentTrigger + '" saqlandi');
+  setTimeout(pollState, 300);
+}
+
+// ===================== ilova ichida ko'rib chiqish =====================
+async function preview(idx) {
+  var m = macros[idx];
+  if (!m || !m.gestures || !m.gestures.length) return;
+  var tok = ++repTok;
+  $('replayBox').classList.add('active');
+
+  var rc = $('repCanvas');
+  var dpr = window.devicePixelRatio || 1;
+  var W = window.innerWidth, H = window.innerHeight;
+  rc.width = Math.round(W * dpr);
+  rc.height = Math.round(H * dpr);
+  var c = rc.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  $('repInfo').textContent = m.trigger;
+
+  for (var i = 0; i < m.gestures.length; i++) {
+    var g = m.gestures[i];
+    var gap = i === 0 ? 300 : Math.max(g.st - m.gestures[i - 1].et, 30);
+    await slp(gap);
+    if (tok !== repTok) return;
+
+    if (g.type === 'tap') {
+      c.beginPath(); c.arc(g.x * W, g.y * H, 8, 0, Math.PI * 2);
+      c.fillStyle = 'rgba(0,122,255,.85)'; c.fill();
+      await slp(Math.max(g.dur, 80));
+    } else if (g.type === 'hold') {
+      await new Promise(function (resolve) {
+        var st = performance.now();
+        (function f() {
+          if (tok !== repTok) { resolve(); return; }
+          var p = Math.min((performance.now() - st) / Math.max(g.dur, 1), 1);
+          c.beginPath(); c.arc(g.x * W, g.y * H, 6 + p * 18, 0, Math.PI * 2);
+          c.strokeStyle = 'rgba(255,149,0,' + (0.8 - p * 0.4) + ')';
+          c.lineWidth = 3; c.stroke();
+          if (p < 1) requestAnimationFrame(f); else resolve();
+        })();
+      });
+    } else if (g.type === 'swipe' && g.path && g.path.length > 1) {
+      c.beginPath(); c.arc(g.path[0].x * W, g.path[0].y * H, 6, 0, Math.PI * 2);
+      c.fillStyle = 'rgba(0,122,255,.85)'; c.fill();
+      c.beginPath(); c.moveTo(g.path[0].x * W, g.path[0].y * H);
+      for (var j = 1; j < g.path.length; j++) {
+        await slp(Math.max(g.path[j].t - g.path[j - 1].t, 3));
+        if (tok !== repTok) return;
+        c.lineTo(g.path[j].x * W, g.path[j].y * H);
+        c.strokeStyle = 'rgba(0,122,255,.6)';
+        c.lineWidth = 3.5; c.lineCap = 'round'; c.lineJoin = 'round';
+        c.stroke();
+        c.beginPath(); c.moveTo(g.path[j].x * W, g.path[j].y * H);
+      }
+      var last = g.path[g.path.length - 1];
+      c.beginPath(); c.arc(last.x * W, last.y * H, 5, 0, Math.PI * 2);
+      c.fillStyle = 'rgba(255,59,48,.85)'; c.fill();
+    }
+  }
+  if (tok === repTok) $('repInfo').textContent = m.trigger + ' \u2713';
+}
+
+function closeReplay() {
+  repTok++;
+  $('replayBox').classList.remove('active');
+}
+$('repClose').onclick = closeReplay;
+
+// ===================== Android "orqaga" tugmasi =====================
+window.vfBack = function () {
+  if ($('replayBox').classList.contains('active')) { closeReplay(); return true; }
+  if ($('recPage').classList.contains('active')) { cancelRec(); return true; }
+  if ($('triggerPage').classList.contains('active')) { $('trigIn').blur(); show('homePage'); return true; }
+  return false;
+};
+
+// ===================== boshlash =====================
+macros = loadMacros();
+render();
+paintState();
+pollState();
+if (NATIVE) setInterval(pollState, 1200);
+
+})();
+</script>
+</body>
+</html>

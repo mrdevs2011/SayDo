@@ -1,0 +1,53 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'uz.voiceflow.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'uz.voiceflow.app'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    // Barqaror imzo: har safar bir xil kalit bilan imzolanadi, shunda
+    // yangi versiya eskisining ustiga o'rnatiladi (Accessibility sozlamasi o'chmaydi).
+    // GitHub Secrets orqali boshqa kalit berish mumkin (VF_* env o'zgaruvchilari).
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('VF_KEYSTORE') ?: '../keystore/voiceflow.jks')
+            storePassword System.getenv('VF_STORE_PASS') ?: 'voiceflow123'
+            keyAlias System.getenv('VF_KEY_ALIAS') ?: 'voiceflow'
+            keyPassword System.getenv('VF_KEY_PASS') ?: 'voiceflow123'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
