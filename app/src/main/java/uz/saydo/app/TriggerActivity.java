@@ -1,4 +1,4 @@
-package uz.voiceflow.app;
+package uz.saydo.app;
 
 import android.app.Activity;
 import android.graphics.Color;
@@ -15,10 +15,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/**
- * Float Start bosilganda ochiladi: trigger so'zini so'raydi.
- * Klaviatura ishonchli ishlashi uchun alohida Activity.
- */
+/** Opens when floating Start is pressed: asks for the voice trigger phrase. */
 public class TriggerActivity extends Activity {
 
     @Override
@@ -40,7 +37,7 @@ public class TriggerActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER);
-        root.setBackgroundColor(Color.argb(180, 0, 0, 0));
+        root.setBackgroundColor(Color.argb(200, 15, 31, 82));
         int pad = Math.round(28 * d);
         root.setPadding(pad, pad, pad, pad);
 
@@ -48,41 +45,45 @@ public class TriggerActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(Math.round(20 * d), Math.round(22 * d), Math.round(20 * d), Math.round(18 * d));
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
+        bg.setColor(Color.parseColor("#1B3A8C"));
         bg.setCornerRadius(18 * d);
+        bg.setStroke(Math.round(1 * d), Color.parseColor("#2A4A9E"));
         card.setBackground(bg);
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         cardLp.gravity = Gravity.CENTER;
 
         TextView title = new TextView(this);
-        title.setText("Trigger so'zni yozing");
+        title.setText("Enter your voice trigger");
         title.setTextSize(18);
-        title.setTextColor(Color.parseColor("#1c1c1e"));
+        title.setTextColor(Color.WHITE);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, 0, 0, Math.round(14 * d));
         card.addView(title);
 
         final EditText input = new EditText(this);
-        input.setHint("Masalan: YouTube och");
+        input.setHint("e.g. open youtube");
+        input.setHintTextColor(Color.parseColor("#A8C0E8"));
+        input.setTextColor(Color.WHITE);
         input.setSingleLine(true);
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         input.setTextSize(16);
         input.setPadding(Math.round(14 * d), Math.round(14 * d), Math.round(14 * d), Math.round(14 * d));
         GradientDrawable ibg = new GradientDrawable();
-        ibg.setColor(Color.parseColor("#F2F2F7"));
+        ibg.setColor(Color.parseColor("#152868"));
         ibg.setCornerRadius(12 * d);
+        ibg.setStroke(Math.round(1 * d), Color.parseColor("#2A4A9E"));
         input.setBackground(ibg);
         card.addView(input, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         Button go = new Button(this);
-        go.setText("Yozishni boshlash");
+        go.setText("Start recording");
         go.setAllCaps(false);
         go.setTextColor(Color.WHITE);
         go.setTextSize(16);
         GradientDrawable gbg = new GradientDrawable();
-        gbg.setColor(Color.parseColor("#007AFF"));
+        gbg.setColor(Color.parseColor("#22C55E"));
         gbg.setCornerRadius(12 * d);
         go.setBackground(gbg);
         LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(
@@ -91,9 +92,9 @@ public class TriggerActivity extends Activity {
         card.addView(go, glp);
 
         Button cancel = new Button(this);
-        cancel.setText("Bekor qilish");
+        cancel.setText("Cancel");
         cancel.setAllCaps(false);
-        cancel.setTextColor(Color.parseColor("#8e8e93"));
+        cancel.setTextColor(Color.parseColor("#A8C0E8"));
         cancel.setTextSize(14);
         cancel.setBackgroundColor(Color.TRANSPARENT);
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
@@ -108,7 +109,7 @@ public class TriggerActivity extends Activity {
             @Override public void run() {
                 String t = input.getText() != null ? input.getText().toString().trim() : "";
                 if (t.isEmpty()) {
-                    Toast.makeText(TriggerActivity.this, "So'z yozing", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(TriggerActivity.this, "Enter a phrase", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 FloatService.startRecording(TriggerActivity.this, t);
@@ -135,7 +136,7 @@ public class TriggerActivity extends Activity {
             @Override public void onClick(View v) { finish(); }
         });
         card.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { /* card bosilsa yopilmasin */ }
+            @Override public void onClick(View v) { /* keep open */ }
         });
 
         input.requestFocus();

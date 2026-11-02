@@ -1,4 +1,4 @@
-package uz.voiceflow.app;
+package uz.saydo.app;
 
 import java.util.List;
 import java.util.Locale;

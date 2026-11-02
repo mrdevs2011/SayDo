@@ -1,4 +1,4 @@
-package uz.voiceflow.app;
+package uz.saydo.app;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -31,7 +31,7 @@ import java.util.List;
  */
 public class VoiceService extends Service {
 
-    static final String ACTION_STOP = "uz.voiceflow.app.STOP";
+    static final String ACTION_STOP = "uz.saydo.app.STOP";
     private static final String CHANNEL = "vf_listen";
     private static final int NOTIF_ID = 17;
     private static final long COOLDOWN_MS = 4000;
@@ -59,7 +59,7 @@ public class VoiceService extends Service {
         super.onCreate();
         NotificationManager nm = getSystemService(NotificationManager.class);
         NotificationChannel ch = new NotificationChannel(
-                CHANNEL, "VoiceFlow tinglash", NotificationManager.IMPORTANCE_LOW);
+                CHANNEL, "SayDo tinglash", NotificationManager.IMPORTANCE_LOW);
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
     }
@@ -80,7 +80,7 @@ public class VoiceService extends Service {
                 startForeground(NOTIF_ID, n);
             }
         } catch (Exception e) {
-            toast("Mikrofon xizmatini ishga tushirib bo'lmadi");
+            toast("Could not start microphone service");
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -91,7 +91,7 @@ public class VoiceService extends Service {
         FloatService.refresh(this);
 
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            toast("Telefonda ovoz tanish xizmati (Google) topilmadi");
+            toast("Speech recognition not available on this device");
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -140,10 +140,21 @@ public class VoiceService extends Service {
     private Intent buildIntent() {
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Store.getLang(this));
+        // Always English — best free on-device engine on Android (Google Speech)
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
+        i.putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true);
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 8);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+        // Prefer on-device model when available (lower latency, better battery, works offline)
+        try {
+            i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        } catch (Exception ignored) { }
+        // Bias toward short commands
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 900);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 400);
         return i;
     }
 
@@ -180,7 +191,7 @@ public class VoiceService extends Service {
         }
         loadMacros();
         if (triggers.isEmpty()) {
-            updateNotification("Shortcut yo'q — ilovada qo'shing");
+            updateNotification("No shortcuts — add one in the app");
             scheduleListen(3000);
             return;
         }
@@ -193,7 +204,7 @@ public class VoiceService extends Service {
                 return;
             }
             recognizer.startListening(buildIntent());
-            updateNotification("Tinglanmoqda · " + langLabel());
+            updateNotification("Listening · " + langLabel());
         } catch (Exception e) {
             createRecognizer();
             errorStreak++;
@@ -246,7 +257,7 @@ public class VoiceService extends Service {
                     delay = 1000;
                     break;
                 case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
-                    toast("Mikrofon ruxsati yo'q");
+                    toast("Microphone permission missing");
                     stopForeground(true);
                     stopSelf();
                     return;
@@ -283,11 +294,11 @@ public class VoiceService extends Service {
         h.removeCallbacks(listenRunnable);
         try { if (recognizer != null) recognizer.cancel(); } catch (Exception ignored) { }
 
-        updateNotification("Bajarilmoqda: " + name);
+        updateNotification("Running: " + name);
         int st = Runner.run(this, m, new GestureService.Done() {
             @Override
             public void onDone(boolean completed) {
-                updateNotification(completed ? "Bajarildi: " + name : "To'xtatildi: " + name);
+                updateNotification(completed ? "Done: " + name : "Stopped: " + name);
                 h.postDelayed(new Runnable() {
                     @Override public void run() {
                         paused = false;
@@ -298,8 +309,8 @@ public class VoiceService extends Service {
             }
         });
         if (st == Runner.NO_ACCESSIBILITY) {
-            toast("Avval Accessibility ni yoqing");
-            updateNotification("Accessibility yoqilmagan");
+            toast("Enable Accessibility first");
+            updateNotification("Accessibility is off");
             h.postDelayed(new Runnable() {
                 @Override public void run() {
                     paused = false;
@@ -329,7 +340,7 @@ public class VoiceService extends Service {
 
         return new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_mic)
-                .setContentTitle("VoiceFlow")
+                .setContentTitle("SayDo")
                 .setContentText(text)
                 .setContentIntent(pOpen)
                 .setOngoing(true)
@@ -351,7 +362,7 @@ public class VoiceService extends Service {
         try {
             if (wakeLock == null) {
                 PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VoiceFlow:listen");
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SayDo:listen");
                 wakeLock.setReferenceCounted(false);
             }
             if (!wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L);

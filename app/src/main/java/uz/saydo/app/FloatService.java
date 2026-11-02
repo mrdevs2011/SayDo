@@ -1,4 +1,4 @@
-package uz.voiceflow.app;
+package uz.saydo.app;
 
 import android.app.Service;
 import android.content.Context;
@@ -19,7 +19,12 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -39,10 +44,10 @@ import java.util.List;
  */
 public class FloatService extends Service {
 
-    static final String ACTION_SHOW = "uz.voiceflow.app.FLOAT_SHOW";
-    static final String ACTION_HIDE = "uz.voiceflow.app.FLOAT_HIDE";
-    static final String ACTION_REFRESH = "uz.voiceflow.app.FLOAT_REFRESH";
-    static final String ACTION_START_REC = "uz.voiceflow.app.FLOAT_START_REC";
+    static final String ACTION_SHOW = "uz.saydo.app.FLOAT_SHOW";
+    static final String ACTION_HIDE = "uz.saydo.app.FLOAT_HIDE";
+    static final String ACTION_REFRESH = "uz.saydo.app.FLOAT_REFRESH";
+    static final String ACTION_START_REC = "uz.saydo.app.FLOAT_START_REC";
     static final String EXTRA_TRIGGER = "trigger";
 
     static volatile boolean showing = false;
@@ -62,6 +67,14 @@ public class FloatService extends Service {
 
     private RecordView recordView;
     private WindowManager.LayoutParams recordLp;
+
+    private View triggerPanel;
+    private WindowManager.LayoutParams triggerLp;
+    private EditText triggerInput;
+
+    private View cancelZone;
+    private WindowManager.LayoutParams cancelLp;
+    private boolean cancelArmed;
 
     private int sizePx;
     private float dens;
@@ -124,6 +137,8 @@ public class FloatService extends Service {
     @Override
     public void onDestroy() {
         stopRecording(false);
+        hideTriggerPanel();
+        hideCancelZone();
         removeBubble();
         showing = false;
         recording = false;
@@ -215,7 +230,9 @@ public class FloatService extends Service {
                     startX = bubbleLp.x;
                     startY = bubbleLp.y;
                     moved = false;
+                    cancelArmed = false;
                     downAt = SystemClock.uptimeMillis();
+                    showCancelZone();
                     return true;
                 case MotionEvent.ACTION_MOVE: {
                     float dx = e.getRawX() - downX;
@@ -225,11 +242,19 @@ public class FloatService extends Service {
                         bubbleLp.x = startX + Math.round(dx);
                         bubbleLp.y = startY + Math.round(dy);
                         try { wm.updateViewLayout(bubble, bubbleLp); } catch (Exception ignored) { }
+                        cancelArmed = isOverCancelZone(e.getRawX(), e.getRawY());
+                        refreshCancelZone();
                     }
                     return true;
                 }
                 case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
+                case MotionEvent.ACTION_CANCEL: {
+                    boolean overCancel = cancelArmed || isOverCancelZone(e.getRawX(), e.getRawY());
+                    hideCancelZone();
+                    if (overCancel && moved) {
+                        onCancelDrop();
+                        return true;
+                    }
                     if (!moved) {
                         long held = SystemClock.uptimeMillis() - downAt;
                         if (held >= 550) openApp();
@@ -238,6 +263,7 @@ public class FloatService extends Service {
                         snapBubble();
                     }
                     return true;
+                }
             }
             return false;
         }
@@ -260,22 +286,34 @@ public class FloatService extends Service {
             return;
         }
         if (!Settings.canDrawOverlays(this)) {
-            toast("Overlay ruxsati yo'q");
+            toast("Overlay permission missing");
             return;
         }
         if (!Store.isEnabled(this)) {
-            toast("Avval ON qiling");
+            toast("Turn ON first");
             return;
         }
-        try {
-            Intent i = new Intent(this, TriggerActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            startActivity(i);
-        } catch (Exception e) {
-            toast("Ochib bo'lmadi");
+        showTriggerPanel();
+    }
+
+    private void onCancelDrop() {
+        // Drag to X: cancel recording / close panel / turn OFF
+        if (recording) {
+            stopRecording(false);
+            toast("Cancelled");
+            return;
         }
+        if (triggerPanel != null) {
+            hideTriggerPanel();
+            toast("Cancelled");
+            return;
+        }
+        // Turn master OFF and hide float
+        Store.setEnabled(this, false);
+        try { stopService(new Intent(this, VoiceService.class)); } catch (Exception ignored) { }
+        VoiceService.running = false;
+        hide(this);
+        toast("SayDo OFF");
     }
 
     private void openApp() {
@@ -291,6 +329,10 @@ public class FloatService extends Service {
         trigger = trigger.trim();
         if (trigger.isEmpty()) return;
         if (trigger.length() > 60) trigger = trigger.substring(0, 60);
+        if (isTriggerTaken(trigger)) {
+            toast("Already used: "" + trigger + """);
+            return;
+        }
         if (recording) stopRecording(false);
         pendingTrigger = trigger;
         gestures.clear();
@@ -300,7 +342,7 @@ public class FloatService extends Service {
         recording = true;
         refreshBubble();
         addRecordLayer();
-        toast("Yozilmoqda: " + trigger);
+        toast("Recording: " + trigger);
     }
 
     private void stopRecording(boolean save) {
@@ -328,12 +370,12 @@ public class FloatService extends Service {
                 m.put("ts", System.currentTimeMillis());
                 arr.put(m);
                 Store.saveMacros(this, arr.toString());
-                toast("Saqlandi: " + pendingTrigger);
+                toast("Saved: " + pendingTrigger);
             } catch (Exception e) {
-                toast("Saqlashda xato");
+                toast("Save failed");
             }
         } else if (save) {
-            toast("Harakat yozilmadi");
+            toast("No actions recorded");
         }
         pendingTrigger = "";
         gestures.clear();
@@ -371,7 +413,7 @@ public class FloatService extends Service {
             recordView = null;
             recording = false;
             refreshBubble();
-            toast("Yozish qatlamini ochib bo'lmadi");
+            toast("Could not open recording overlay");
         }
     }
 
@@ -513,6 +555,259 @@ public class FloatService extends Service {
     }
 
     // ============================================================ helpers
+
+
+    // ============================================================ trigger overlay (no Activity)
+
+    private void showTriggerPanel() {
+        if (triggerPanel != null) return;
+        if (wm == null) return;
+
+        float d = dens;
+        FrameLayout root = new FrameLayout(this);
+        root.setClickable(true);
+        root.setBackgroundColor(Color.argb(180, 15, 31, 82));
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        int pad = Math.round(20 * d);
+        card.setPadding(pad, pad, pad, Math.round(16 * d));
+        GradientDrawable cbg = new GradientDrawable();
+        cbg.setColor(Color.parseColor("#1B3A8C"));
+        cbg.setCornerRadius(18 * d);
+        cbg.setStroke(Math.round(1 * d), Color.parseColor("#2A4A9E"));
+        card.setBackground(cbg);
+
+        TextView title = new TextView(this);
+        title.setText("Enter your voice trigger");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(17);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, Math.round(12 * d));
+        card.addView(title);
+
+        triggerInput = new EditText(this);
+        triggerInput.setHint("e.g. open youtube");
+        triggerInput.setHintTextColor(Color.parseColor("#A8C0E8"));
+        triggerInput.setTextColor(Color.WHITE);
+        triggerInput.setSingleLine(true);
+        triggerInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        triggerInput.setTextSize(16);
+        triggerInput.setPadding(Math.round(14 * d), Math.round(14 * d), Math.round(14 * d), Math.round(14 * d));
+        GradientDrawable ibg = new GradientDrawable();
+        ibg.setColor(Color.parseColor("#152868"));
+        ibg.setCornerRadius(12 * d);
+        ibg.setStroke(Math.round(1 * d), Color.parseColor("#2A4A9E"));
+        triggerInput.setBackground(ibg);
+        card.addView(triggerInput, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        Button go = new Button(this);
+        go.setText("Start recording");
+        go.setAllCaps(false);
+        go.setTextColor(Color.WHITE);
+        go.setTextSize(15);
+        GradientDrawable gbg = new GradientDrawable();
+        gbg.setColor(Color.parseColor("#22C55E"));
+        gbg.setCornerRadius(12 * d);
+        go.setBackground(gbg);
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        glp.topMargin = Math.round(12 * d);
+        card.addView(go, glp);
+
+        Button cancel = new Button(this);
+        cancel.setText("Cancel");
+        cancel.setAllCaps(false);
+        cancel.setTextColor(Color.parseColor("#A8C0E8"));
+        cancel.setTextSize(14);
+        cancel.setBackgroundColor(Color.TRANSPARENT);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        clp.topMargin = Math.round(2 * d);
+        card.addView(cancel, clp);
+
+        FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        cardLp.gravity = Gravity.CENTER;
+        int side = Math.round(28 * d);
+        cardLp.leftMargin = side;
+        cardLp.rightMargin = side;
+        root.addView(card, cardLp);
+
+        int type = Build.VERSION.SDK_INT >= 26
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
+
+        triggerLp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+                        | WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+                PixelFormat.TRANSLUCENT);
+        triggerLp.dimAmount = 0.45f;
+        triggerLp.gravity = Gravity.CENTER;
+        triggerLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+
+        Runnable submit = new Runnable() {
+            @Override public void run() {
+                if (triggerInput == null) return;
+                String phrase = triggerInput.getText() != null
+                        ? triggerInput.getText().toString().trim() : "";
+                if (phrase.isEmpty()) {
+                    toast("Enter a phrase");
+                    return;
+                }
+                if (isTriggerTaken(phrase)) {
+                    toast("Already used: \"" + phrase + "\"");
+                    return;
+                }
+                hideTriggerPanel();
+                beginRecording(phrase);
+            }
+        };
+        go.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { submit.run(); }
+        });
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { hideTriggerPanel(); }
+        });
+        root.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { hideTriggerPanel(); }
+        });
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { }
+        });
+        triggerInput.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int actionId, android.view.KeyEvent event) {
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    submit.run();
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        try {
+            wm.addView(root, triggerLp);
+            triggerPanel = root;
+            triggerInput.requestFocus();
+            h.postDelayed(new Runnable() {
+                @Override public void run() {
+                    try {
+                        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                        if (imm != null && triggerInput != null) {
+                            imm.showSoftInput(triggerInput, InputMethodManager.SHOW_IMPLICIT);
+                        }
+                    } catch (Exception ignored) { }
+                }
+            }, 120);
+        } catch (Exception e) {
+            triggerPanel = null;
+            toast("Could not open");
+        }
+    }
+
+    private void hideTriggerPanel() {
+        if (triggerPanel != null && wm != null) {
+            try {
+                InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                if (imm != null && triggerInput != null) {
+                    imm.hideSoftInputFromWindow(triggerInput.getWindowToken(), 0);
+                }
+            } catch (Exception ignored) { }
+            try { wm.removeView(triggerPanel); } catch (Exception ignored) { }
+        }
+        triggerPanel = null;
+        triggerInput = null;
+        triggerLp = null;
+    }
+
+    private void showCancelZone() {
+        if (cancelZone != null || wm == null) return;
+        int zone = Math.round(64 * dens);
+        TextView x = new TextView(this);
+        x.setText("\u2715");
+        x.setTextColor(Color.WHITE);
+        x.setTextSize(28);
+        x.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(Color.parseColor("#E11D48"));
+        x.setBackground(bg);
+        x.setElevation(10 * dens);
+
+        int type = Build.VERSION.SDK_INT >= 26
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
+        cancelLp = new WindowManager.LayoutParams(
+                zone, zone, type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT);
+        cancelLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        cancelLp.y = Math.round(36 * dens);
+
+        try {
+            wm.addView(x, cancelLp);
+            cancelZone = x;
+            cancelArmed = false;
+        } catch (Exception e) {
+            cancelZone = null;
+        }
+    }
+
+    private void hideCancelZone() {
+        if (cancelZone != null && wm != null) {
+            try { wm.removeView(cancelZone); } catch (Exception ignored) { }
+        }
+        cancelZone = null;
+        cancelLp = null;
+        cancelArmed = false;
+    }
+
+    private void refreshCancelZone() {
+        if (cancelZone == null) return;
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(cancelArmed ? Color.parseColor("#BE123C") : Color.parseColor("#E11D48"));
+        cancelZone.setBackground(bg);
+        cancelZone.setScaleX(cancelArmed ? 1.15f : 1f);
+        cancelZone.setScaleY(cancelArmed ? 1.15f : 1f);
+    }
+
+    private boolean isOverCancelZone(float rawX, float rawY) {
+        if (cancelZone == null) return false;
+        int[] loc = new int[2];
+        cancelZone.getLocationOnScreen(loc);
+        int left = loc[0];
+        int top = loc[1];
+        int right = left + cancelZone.getWidth();
+        int bottom = top + cancelZone.getHeight();
+        int pad = Math.round(12 * dens);
+        return rawX >= left - pad && rawX <= right + pad && rawY >= top - pad && rawY <= bottom + pad;
+    }
+
+    private boolean isTriggerTaken(String phrase) {
+        if (phrase == null) return false;
+        String want = TriggerMatcher.norm(phrase);
+        if (want.isEmpty()) return false;
+        try {
+            JSONArray arr = new JSONArray(Store.getMacros(this));
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                if (want.equals(TriggerMatcher.norm(o.optString("trigger", "")))) return true;
+            }
+        } catch (Exception ignored) { }
+        return false;
+    }
 
     private void toast(final String msg) {
         h.post(new Runnable() {

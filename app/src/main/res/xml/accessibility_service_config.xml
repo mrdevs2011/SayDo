@@ -9,4 +9,4 @@
     android:canRequestFilterKeyEvents="false"
     android:description="@string/acc_desc"
     android:notificationTimeout="200"
-    android:settingsActivity="uz.voiceflow.app.MainActivity" />
+    android:settingsActivity="uz.saydo.app.MainActivity" />
