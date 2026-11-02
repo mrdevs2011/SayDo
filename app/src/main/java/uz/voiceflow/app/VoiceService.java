@@ -325,6 +325,24 @@ public class VoiceService extends Service {
         } catch (Exception ignored) { }
     }
 
+
+    private void acquireWakeLock() {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VoiceFlow:listen");
+                wakeLock.setReferenceCounted(false);
+            }
+            if (!wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L);
+        } catch (Exception ignored) { }
+    }
+
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        } catch (Exception ignored) { }
+    }
+
     private void toast(final String msg) {
         h.post(new Runnable() {
             @Override public void run() {
