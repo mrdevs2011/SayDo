@@ -319,7 +319,7 @@ public class MainActivity extends Activity {
                             Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                     Uri.parse("package:" + getPackageName()));
                             startActivity(i);
-                            toast(""Boshqa ilovalar ustida ko'rsatish" ruxsatini yoqing");
+                            toast("Boshqa ilovalar ustida korsatish ruxsatini yoqing");
                         } catch (Exception e) {
                             toast("Sozlamalarni ochib bo'lmadi");
                         }
