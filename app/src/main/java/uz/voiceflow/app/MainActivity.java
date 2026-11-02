@@ -176,6 +176,8 @@ public class MainActivity extends Activity {
             o.put("acc", isAccessibilityEnabled());
             o.put("listening", VoiceService.running);
             o.put("lang", Store.getLang(this));
+            o.put("float", FloatService.showing);
+            o.put("overlay", FloatService.canOverlay(this));
             return o.toString();
         } catch (Exception e) {
             return "{}";
@@ -303,6 +305,35 @@ public class MainActivity extends Activity {
                     } catch (Exception e) {
                         toast("Sozlamalarni ochib bo'lmadi");
                     }
+                }
+            });
+        }
+
+        /** Suzuvchi tugmani yoqish/o'chirish. Overlay ruxsati yo'q bo'lsa sozlamani ochadi. */
+        @JavascriptInterface
+        public void toggleFloat() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (!FloatService.canOverlay(MainActivity.this)) {
+                        try {
+                            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName()));
+                            startActivity(i);
+                            toast(""Boshqa ilovalar ustida ko'rsatish" ruxsatini yoqing");
+                        } catch (Exception e) {
+                            toast("Sozlamalarni ochib bo'lmadi");
+                        }
+                        return;
+                    }
+                    if (FloatService.showing) {
+                        FloatService.hide(MainActivity.this);
+                    } else {
+                        FloatService.show(MainActivity.this);
+                    }
+                    // Holatni biroz kechiktirib yangilaymiz
+                    web.postDelayed(new Runnable() {
+                        @Override public void run() { pushState(); }
+                    }, 300);
                 }
             });
         }

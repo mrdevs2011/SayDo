@@ -47,6 +47,9 @@ button{font-family:inherit}
 .hbtn.mic.off{color:#8e8e93}
 .hbtn.mic.on::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid rgba(52,199,89,.35);animation:pu 1.6s infinite}
 @keyframes pu{0%{transform:scale(.9);opacity:1}100%{transform:scale(1.25);opacity:0}}
+.hbtn.float{top:92px;right:16px;left:auto}
+.hbtn.float.on{color:#fff;background:#007AFF}
+.hbtn.float.off{color:#8e8e93}
 
 /* ===== TRIGGER ===== */
 .trigger{justify-content:flex-start;align-items:center;padding:24vh 28px 0}
@@ -87,6 +90,9 @@ button{font-family:inherit}
   </button>
   <button class="hbtn r mic off" id="micBtn" aria-label="Ovoz">
     <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+  </button>
+  <button class="hbtn float off" id="floatBtn" aria-label="Suzuvchi tugma">
+    <svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3" fill="currentColor"/><circle cx="16" cy="16" r="3" fill="currentColor"/><path d="M10.5 9.5l3 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
   </button>
   <div class="home">
     <h1>VoiceFlow</h1>
@@ -219,6 +225,7 @@ function saveMacros() {
 function paintState() {
   $('accBtn').className = 'hbtn l acc ' + (state.acc ? 'on' : 'off');
   $('micBtn').className = 'hbtn r mic ' + (state.listening ? 'on' : 'off');
+  if ($('floatBtn')) $('floatBtn').className = 'hbtn float ' + (state.float ? 'on' : 'off');
   var hint = $('hint');
   if (!NATIVE) { hint.textContent = ''; hint.className = 'hint'; return; }
   var L = String(state.lang || 'uz-UZ').split('-')[0].toUpperCase();
@@ -264,6 +271,15 @@ pressable($('micBtn'), function () {
   var l = window.Android.cycleLang();
   toast('Til: ' + l);
   pollState();
+});
+
+pressable($('floatBtn'), function () {
+  if (!NATIVE) return;
+  window.Android.toggleFloat();
+  setTimeout(pollState, 400);
+  setTimeout(pollState, 1200);
+}, function () {
+  toast(state.float ? 'Suzuvchi tugma yoqilgan' : 'Suzuvchi tugma o\'chiq');
 });
 
 // ===================== ro'yxat =====================

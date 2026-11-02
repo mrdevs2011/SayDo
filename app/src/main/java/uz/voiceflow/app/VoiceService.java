@@ -85,6 +85,7 @@ public class VoiceService extends Service {
 
         running = true;
         destroyed = false;
+        FloatService.refresh(this);
 
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             toast("Telefonda ovoz tanish xizmati (Google) topilmadi");
@@ -106,6 +107,7 @@ public class VoiceService extends Service {
     public void onDestroy() {
         destroyed = true;
         running = false;
+        FloatService.refresh(this);
         h.removeCallbacksAndMessages(null);
         destroyRecognizer();
         super.onDestroy();
