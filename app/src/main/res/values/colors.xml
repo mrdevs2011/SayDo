@@ -9,4 +9,5 @@
     <color name="danger">#FF3B30</color>
     <color name="chip_off">#E5E5EA</color>
     <color name="divider">#E5E5EA</color>
+    <color name="ic_launcher_background">#007AFF</color>
 </resources>
