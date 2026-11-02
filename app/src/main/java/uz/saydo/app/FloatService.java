@@ -330,7 +330,7 @@ public class FloatService extends Service {
         if (trigger.isEmpty()) return;
         if (trigger.length() > 60) trigger = trigger.substring(0, 60);
         if (isTriggerTaken(trigger)) {
-            toast("Already used: "" + trigger + """);
+            toast("Already used: \"" + trigger + "\"");
             return;
         }
         if (recording) stopRecording(false);
