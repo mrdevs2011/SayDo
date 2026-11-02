@@ -1,4 +1,4 @@
-package uz.voiceflow.app;
+package uz.saydo.app;
 
 import android.Manifest;
 import android.content.ComponentName;
@@ -43,7 +43,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     private RecyclerView list;
     private View empty;
-    private TextView hint, chipAcc, chipMic, chipLang, masterLabel;
+    private TextView hint, chipAcc, chipMic, masterLabel;
     private SwitchMaterial masterSwitch;
     private MacroAdapter adapter;
     private JSONArray macros = new JSONArray();
@@ -67,7 +67,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         hint = findViewById(R.id.hint);
         chipAcc = findViewById(R.id.chipAcc);
         chipMic = findViewById(R.id.chipMic);
-        chipLang = findViewById(R.id.chipLang);
         masterLabel = findViewById(R.id.masterLabel);
         masterSwitch = findViewById(R.id.masterSwitch);
         ImageButton btnSettings = findViewById(R.id.btnSettings);
@@ -84,10 +83,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
         chipAcc.setOnClickListener(v -> {
             if (!isAccessibilityEnabled()) {
-                toast("VoiceFlow ni Accessibility da yoqing");
+                toast("Enable SayDo in Accessibility");
                 openAccessibility();
             } else {
-                toast("Accessibility yoqilgan");
+                toast("Accessibility is on");
             }
         });
         chipAcc.setOnLongClickListener(v -> {
@@ -97,17 +96,11 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
         chipMic.setOnClickListener(v -> {
             if (!Store.isEnabled(this)) {
-                toast("Avval ON qiling");
+                toast("Turn ON first");
                 return;
             }
             if (VoiceService.running) stopListening();
             else startListeningFlow();
-        });
-
-        chipLang.setOnClickListener(v -> {
-            String l = Store.nextLang(this);
-            toast("Til: " + l);
-            refreshUi();
         });
 
         btnSettings.setOnClickListener(v -> openAppInfo());
@@ -182,24 +175,20 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         boolean acc = isAccessibilityEnabled();
         boolean listening = VoiceService.running;
         boolean enabled = Store.isEnabled(this);
-        String lang = Store.getLang(this);
-        String langShort = lang.length() >= 2 ? lang.substring(0, 2).toUpperCase() : lang;
-
-        styleChip(chipAcc, acc, acc ? "Accessibility" : "Accessibility", !acc);
-        styleChip(chipMic, listening, listening ? "Tinglanmoqda" : "Mikrofon", false);
-        chipLang.setText(langShort);
+        styleChip(chipAcc, acc, "Accessibility", !acc);
+        styleChip(chipMic, listening, listening ? "Listening" : "Microphone", false);
 
         if (!acc) {
-            hint.setText("Harakatlar uchun Accessibility yoqing");
+            hint.setText("Enable Accessibility to run actions");
             hint.setTextColor(ContextCompat.getColor(this, R.color.danger));
         } else if (listening) {
-            hint.setText("Tinglanmoqda · " + langShort);
+            hint.setText("Listening · EN");
             hint.setTextColor(ContextCompat.getColor(this, R.color.success));
         } else if (enabled) {
-            hint.setText("ON · float START bilan yozing");
+            hint.setText("ON · record with floating START");
             hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         } else {
-            hint.setText("OFF · ishlatish uchun ON qiling");
+            hint.setText("OFF · turn ON to use");
             hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         }
 
@@ -233,9 +222,9 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
                 try {
                     startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                             Uri.parse("package:" + getPackageName())));
-                    toast("Boshqa ilovalar ustida ko'rsatish ruxsatini yoqing");
+                    toast("Allow display over other apps");
                 } catch (Exception e) {
-                    toast("Sozlamalarni ochib bo'lmadi");
+                    toast("Could not open settings");
                 }
             } else {
                 FloatService.show(this);
@@ -280,7 +269,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
             else startService(i);
         } catch (Exception e) {
-            toast("Tinglashni boshlab bo'lmadi");
+            toast("Could not start listening");
         }
         refreshUi();
     }
@@ -299,7 +288,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 startListeningFlow();
             } else {
-                toast("Mikrofon ruxsati kerak");
+                toast("Microphone permission required");
             }
         } else if (code == REQ_NOTIF) {
             startListeningFlow();
@@ -313,10 +302,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         try {
             JSONObject m = macros.optJSONObject(index);
             int r = Runner.run(this, m, null);
-            if (r == Runner.NO_ACCESSIBILITY) toast("Avval Accessibility ni yoqing");
-            else if (r == Runner.INVALID) toast("Makro yaroqsiz");
+            if (r == Runner.NO_ACCESSIBILITY) toast("Enable Accessibility first");
+            else if (r == Runner.INVALID) toast("Invalid shortcut");
         } catch (Exception e) {
-            toast("Ishga tushmadi");
+            toast("Could not run");
         }
     }
 
@@ -324,7 +313,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     public void onDelete(int index) {
         if (adapter.getArmedDelete() != index) {
             adapter.armDelete(index);
-            toast("O'chirish uchun yana bosing");
+            toast("Tap again to delete");
             ui.postDelayed(() -> {
                 if (!destroyed && adapter.getArmedDelete() == index) adapter.armDelete(-1);
             }, 2200);
@@ -337,9 +326,9 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             }
             Store.saveMacros(this, next.toString());
             reloadMacros();
-            toast("O'chirildi");
+            toast("Deleted");
         } catch (Exception e) {
-            toast("O'chirib bo'lmadi");
+            toast("Could not delete");
         }
     }
 
@@ -364,7 +353,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         try {
             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
         } catch (Exception e) {
-            toast("Sozlamalarni ochib bo'lmadi");
+            toast("Could not open settings");
         }
     }
 
@@ -373,7 +362,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.parse("package:" + getPackageName())));
         } catch (Exception e) {
-            toast("Sozlamalarni ochib bo'lmadi");
+            toast("Could not open settings");
         }
     }
 

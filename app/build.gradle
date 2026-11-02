@@ -3,23 +3,23 @@ plugins {
 }
 
 android {
-    namespace 'uz.voiceflow.app'
+    namespace 'uz.saydo.app'
     compileSdk 35
 
     defaultConfig {
-        applicationId 'uz.voiceflow.app'
+        applicationId 'uz.saydo.app'
         minSdk 26
         targetSdk 34
-        versionCode 6
-        versionName '2.0.0'
+        versionCode 8
+        versionName '2.2.0'
     }
 
     signingConfigs {
         release {
-            storeFile file(System.getenv('VF_KEYSTORE') ?: '../keystore/voiceflow.jks')
-            storePassword System.getenv('VF_STORE_PASS') ?: 'voiceflow123'
-            keyAlias System.getenv('VF_KEY_ALIAS') ?: 'voiceflow'
-            keyPassword System.getenv('VF_KEY_PASS') ?: 'voiceflow123'
+            storeFile file(System.getenv('VF_KEYSTORE') ?: '../keystore/saydo.jks')
+            storePassword System.getenv('VF_STORE_PASS') ?: 'saydo123'
+            keyAlias System.getenv('VF_KEY_ALIAS') ?: 'saydo'
+            keyPassword System.getenv('VF_KEY_PASS') ?: 'saydo123'
         }
     }
 

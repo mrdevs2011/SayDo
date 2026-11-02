@@ -1,17 +1,17 @@
-package uz.voiceflow.app;
+package uz.saydo.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** Makrolar va sozlamalarni saqlash. Thread-safe commit. */
+/** Macro and settings storage. Always English (en-US). */
 final class Store {
-    private static final String PREFS = "voiceflow";
+    private static final String PREFS = "saydo";
     private static final String K_MACROS = "macros";
     private static final String K_LANG = "lang";
     private static final String K_ENABLED = "master_on";
-    private static final int MAX_MACROS_JSON = 512 * 1024; // 512 KB
+    private static final int MAX_MACROS_JSON = 512 * 1024;
 
-    static final String[] LANGS = {"uz-UZ", "ru-RU", "en-US"};
+    private static final String LANG = "en-US";
 
     private Store() {}
 
@@ -30,11 +30,7 @@ final class Store {
 
     static void saveMacros(Context c, String json) {
         if (json == null || json.isEmpty()) json = "[]";
-        if (json.length() > MAX_MACROS_JSON) {
-            // Juda katta — saqlamaymiz (buzilishdan himoya)
-            return;
-        }
-        // Minimal JSON tekshiruv
+        if (json.length() > MAX_MACROS_JSON) return;
         String t = json.trim();
         if (!t.startsWith("[") || !t.endsWith("]")) return;
         try {
@@ -42,21 +38,9 @@ final class Store {
         } catch (Exception ignored) { }
     }
 
+    /** Always en-US — no language switching. */
     static String getLang(Context c) {
-        try {
-            String l = sp(c).getString(K_LANG, LANGS[0]);
-            for (String s : LANGS) if (s.equals(l)) return l;
-        } catch (Exception ignored) { }
-        return LANGS[0];
-    }
-
-    static String nextLang(Context c) {
-        String cur = getLang(c);
-        int idx = 0;
-        for (int i = 0; i < LANGS.length; i++) if (LANGS[i].equals(cur)) idx = i;
-        String next = LANGS[(idx + 1) % LANGS.length];
-        try { sp(c).edit().putString(K_LANG, next).commit(); } catch (Exception ignored) { }
-        return next;
+        return LANG;
     }
 
     static boolean isEnabled(Context c) {

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">VoiceFlow</string>
-    <string name="acc_desc">VoiceFlow — foydalanuvchi o‘zi yozib olgan oddiy ekran harakatlarini (tap, ushlab turish, surish) faqat o‘zi aytgan trigger so‘z yoki tugma bosilganda qayta bajaradi.\n\nEkrandagi matn o‘qilmaydi, hech qanday ma’lumot internetga yuborilmaydi. Xizmat faqat siz ruxsat bergan paytda ishlaydi va istalgan vaqt Sozlamalardan o‘chirilishi mumkin.</string>
+    <string name="app_name">SayDo</string>
+    <string name="acc_desc">SayDo replays simple screen actions (tap, long-press, swipe) that you recorded, only when you speak your trigger phrase or press the button.\n\nIt does not read on-screen text and does not send data to the internet. The service runs only while you allow it and can be turned off anytime in Settings.</string>
     <string name="master_on">ON</string>
     <string name="master_off">OFF</string>
-    <string name="empty_title">Hali shortcut yo‘q</string>
-    <string name="empty_sub">Float START orqali yozing</string>
+    <string name="empty_title">No shortcuts yet</string>
+    <string name="empty_sub">Use the floating START button to record</string>
     <string name="acc_on">Accessibility</string>
-    <string name="mic_on">Tinglanmoqda</string>
-    <string name="mic_off">Mikrofon</string>
+    <string name="mic_on">Listening</string>
+    <string name="mic_off">Microphone</string>
 </resources>
