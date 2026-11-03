@@ -348,11 +348,27 @@ public class FloatService extends Service {
     }
 
     private int screenW() {
-        return getResources().getDisplayMetrics().widthPixels;
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                android.graphics.Rect b = wm.getMaximumWindowMetrics().getBounds();
+                return b.width();
+            } catch (Exception ignored) { }
+        }
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);
+        return dm.widthPixels;
     }
 
     private int screenH() {
-        return getResources().getDisplayMetrics().heightPixels;
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                android.graphics.Rect b = wm.getMaximumWindowMetrics().getBounds();
+                return b.height();
+            } catch (Exception ignored) { }
+        }
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);
+        return dm.heightPixels;
     }
 
     private void onBubbleTap() {
