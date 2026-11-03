@@ -68,6 +68,31 @@ final class Setup {
         return i;
     }
 
+    /** Oflayn ovoz kiritish sozlamalari ekranini ochadi */
+    static void openVoiceSettings(Context c) {
+        try {
+            Intent i = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(i);
+            Toast.makeText(c.getApplicationContext(), "Google Voice Typing > Offline speech recognition", Toast.LENGTH_LONG).show();
+            return;
+        } catch (Exception ignored) { }
+
+        try {
+            Intent i = new Intent(Settings.ACTION_LOCALE_SETTINGS);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(i);
+            Toast.makeText(c.getApplicationContext(), "Voice input > Offline speech recognition", Toast.LENGTH_LONG).show();
+            return;
+        } catch (Exception ignored) { }
+
+        try {
+            Intent i = new Intent(Settings.ACTION_SETTINGS);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(i);
+        } catch (Exception ignored) { }
+    }
+
     /** Berilgan qadam uchun kerakli sozlama ekranini ochadi. */
     static void route(Context c, int step) {
         Intent i;

@@ -45,7 +45,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     private RecyclerView list;
     private View empty;
-    private TextView hint, btnStart;
+    private TextView hint, btnStart, btnVoiceSettings;
     private MacroAdapter adapter;
     private JSONArray macros = new JSONArray();
 
@@ -67,6 +67,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         empty = findViewById(R.id.empty);
         hint = findViewById(R.id.hint);
         btnStart = findViewById(R.id.btnStart);
+        btnVoiceSettings = findViewById(R.id.btnVoiceSettings);
 
         adapter = new MacroAdapter(this);
         list.setLayoutManager(new LinearLayoutManager(this));
@@ -74,6 +75,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         list.setHasFixedSize(true);
 
         btnStart.setOnClickListener(v -> onStartClicked());
+        btnVoiceSettings.setOnClickListener(v -> Setup.openVoiceSettings(this));
 
         reloadMacros();
         refreshUi();
