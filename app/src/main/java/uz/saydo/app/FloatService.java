@@ -15,6 +15,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -333,6 +334,14 @@ public class FloatService extends Service {
             toast("Already used: \"" + trigger + "\"");
             return;
         }
+        if (GestureService.instance == null) {
+            toast("Turn on SayDo in Accessibility first");
+            try {
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Exception ignored) { }
+            return;
+        }
         if (recording) stopRecording(false);
         pendingTrigger = trigger;
         gestures.clear();
@@ -347,7 +356,7 @@ public class FloatService extends Service {
 
     private void stopRecording(boolean save) {
         if (!recording && recordView == null) return;
-        finishStroke();
+        finishStroke(false, false);
         recording = false;
         removeRecordLayer();
         refreshBubble();
@@ -424,26 +433,88 @@ public class FloatService extends Service {
         recordView = null;
     }
 
-    private void finishStroke() {
+    /**
+     * Joriy chiziqni gest sifatida saqlaydi.
+     * @param cancelled tizim (orqaga/uy swipe) chiziqni o'zi olib qo'ygan bo'lsa true
+     * @param inject    true bo'lsa, gest tagidagi ilovaga ham yuboriladi (pass-through)
+     */
+    private void finishStroke(boolean cancelled, boolean inject) {
         if (curStroke == null) return;
+        JSONObject saved = null;
         try {
             long now = SystemClock.uptimeMillis() - recStartElapsed;
+            long d = Math.max(0, now - strokeStartElapsed);
             curStroke.put("et", now);
-            curStroke.put("dur", Math.max(0, now - strokeStartElapsed));
-            if (curPath != null && curPath.length() > 1) {
+            curStroke.put("dur", d);
+            String globalAction = cancelled
+                    ? edgeAction(curStroke.optDouble("x", 0.5), curStroke.optDouble("y", 0.5), d)
+                    : null;
+            if (globalAction != null) {
+                curStroke.put("type", "global");
+                curStroke.put("action", globalAction);
+            } else if (curPath != null && curPath.length() > 1) {
                 curStroke.put("type", "swipe");
                 curStroke.put("path", curPath);
             } else {
-                long d = now - strokeStartElapsed;
                 curStroke.put("type", d >= 400 ? "hold" : "tap");
             }
             if (gestures.size() < MAX_GESTURES) {
                 gestures.add(curStroke);
+                saved = curStroke;
             }
         } catch (Exception ignored) { }
         curStroke = null;
         curPath = null;
         if (recordView != null) recordView.clearVisual();
+        if (inject && saved != null && recording) passThrough(saved);
+    }
+
+    /** Ekran chetidan boshlangan va tizim olib qo'ygan swipe: orqaga / uy / so'nggi ilovalar. */
+    private String edgeAction(double nx, double ny, long durMs) {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        float px = (float) (nx * dm.widthPixels);
+        float py = (float) (ny * dm.heightPixels);
+        if (py > dm.heightPixels - 64f * dens) return durMs >= 450 ? "recents" : "home";
+        if (px < 32f * dens || px > dm.widthPixels - 32f * dens) return "back";
+        return null;
+    }
+
+    // ---- pass-through: yozish qatlami ushlab olgan bosishni tagidagi ilovaga o'tkazish
+
+    private int passToken = 0;
+
+    private void setRecordTouchable(boolean touchable) {
+        if (recordView == null || recordLp == null) return;
+        if (touchable) recordLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        else recordLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        try { wm.updateViewLayout(recordView, recordLp); } catch (Exception ignored) { }
+    }
+
+    private void passThrough(JSONObject stroke) {
+        GestureService svc = GestureService.instance;
+        if (svc == null || recordView == null) return;
+        final int tok = ++passToken;
+        setRecordTouchable(false);
+        boolean ok = svc.injectNow(stroke, new Runnable() {
+            @Override public void run() {
+                h.postDelayed(new Runnable() {
+                    @Override public void run() {
+                        if (tok == passToken) setRecordTouchable(true);
+                    }
+                }, 30);
+            }
+        });
+        if (!ok) {
+            setRecordTouchable(true);
+            return;
+        }
+        // Xavfsizlik: callback kelmasa ham qatlam qayta tegiladigan bo'ladi
+        long guard = Math.max(stroke.optLong("dur", 60), 60) + 1200;
+        h.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (tok == passToken) setRecordTouchable(true);
+            }
+        }, guard);
     }
 
     // ============================================================ record view
@@ -451,14 +522,18 @@ public class FloatService extends Service {
     private final class RecordView extends View {
         private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path livePath = new Path();
         private float lastX, lastY;
         private boolean fingerDown;
 
         RecordView(Context ctx) {
             super(ctx);
-            setBackgroundColor(Color.argb(30, 0, 0, 0)); // biroz qorong'i — yozayotgani ko'rinsin
+            setBackgroundColor(Color.TRANSPARENT); // ilova ko'rinib tursin
             setClickable(true);
+            borderPaint.setColor(Color.argb(210, 255, 59, 48));
+            borderPaint.setStyle(Paint.Style.STROKE);
+            borderPaint.setStrokeWidth(3f * dens);
             dotPaint.setColor(Color.argb(220, 0, 122, 255));
             dotPaint.setStyle(Paint.Style.FILL);
             linePaint.setColor(Color.argb(200, 0, 122, 255));
@@ -477,6 +552,8 @@ public class FloatService extends Service {
         @Override
         protected void onDraw(Canvas c) {
             super.onDraw(c);
+            float bw = borderPaint.getStrokeWidth() / 2f;
+            c.drawRect(bw, bw, getWidth() - bw, getHeight() - bw, borderPaint);
             if (!fingerDown) return;
             if (!livePath.isEmpty()) {
                 c.drawPath(livePath, linePaint);
@@ -497,7 +574,7 @@ public class FloatService extends Service {
 
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    finishStroke();
+                    finishStroke(false, false);
                     fingerDown = true;
                     lastX = x;
                     lastY = y;
@@ -537,7 +614,8 @@ public class FloatService extends Service {
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                     if (fingerDown) {
-                        finishStroke();
+                        finishStroke(e.getActionMasked() == MotionEvent.ACTION_CANCEL,
+                                e.getActionMasked() == MotionEvent.ACTION_UP);
                         fingerDown = false;
                         livePath.reset();
                         invalidate();
