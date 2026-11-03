@@ -306,6 +306,23 @@ public final class MacroRepository {
         notifyChanged();
     }
 
+    public void saveAll(List<Macro> macros) {
+        if (macros == null) return;
+        rwLock.writeLock().lock();
+        try {
+            cache.clear();
+            for (Macro m : macros) {
+                if (m != null && !m.trigger.isEmpty()) {
+                    cache.put(m.id, m);
+                }
+            }
+            persistLocked();
+        } finally {
+            rwLock.writeLock().unlock();
+        }
+        notifyChanged();
+    }
+
     public boolean delete(String id) {
         if (id == null) return false;
         boolean removed;
