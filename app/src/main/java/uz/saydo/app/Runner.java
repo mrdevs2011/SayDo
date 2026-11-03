@@ -3,12 +3,15 @@ package uz.saydo.app;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 
 import org.json.JSONObject;
 
 /**
  * Makroni haqiqiy qurilmada ishga tushirish.
- * Har doim Home'dan boshlanadi: avval Home'ga o'tadi, launcher chiqqach gestlarni bajaradi.
+ * - Oddiy makro: avval Home'ga o'tadi, launcher chiqqach gestlarni bajaradi.
+ * - Qulf ekranida yozilgan makro ("locked": true): ekranni uyg'otadi (kerak bo'lsa avval qulflaydi)
+ *   va gestlarni qulf ekranining o'zidan boshlaydi (slide + parol kiritish ham ijro etiladi).
  */
 final class Runner {
     static final int OK = 0;
@@ -29,14 +32,19 @@ final class Runner {
         GestureService g = GestureService.instance;
         if (g == null) return NO_ACCESSIBILITY;
         if (!Net.isOnline(ctx)) return OFFLINE;
-        if (Setup.isLocked(ctx)) return LOCKED;
+
+        final Context app = ctx.getApplicationContext();
+        final boolean macroLocked = macro.optBoolean("locked", false);
+        final boolean phoneLocked = Setup.isLocked(ctx);
+        // Oddiy makro qulf ekranida ishlamaydi (qulf ochilgach ishga tushadi)
+        if (phoneLocked && !macroLocked) return LOCKED;
 
         final int token = ++runToken;
         GestureService.Done prev = pendingDone;
         pendingDone = done;
         if (prev != null) prev.onDone(false);
 
-        g.goHomeThen(new Runnable() {
+        final Runnable start = new Runnable() {
             @Override public void run() {
                 if (token != runToken) return; // yangiroq run kelgan, eskisi allaqachon bekor qilingan
                 pendingDone = null;
@@ -51,7 +59,47 @@ final class Runner {
                     if (done != null) done.onDone(false);
                 }
             }
+        };
+
+        if (!macroLocked) {
+            g.goHomeThen(start);
+            return OK;
+        }
+
+        // Qulf ekranidan boshlanadigan makro
+        wake(app);
+        if (phoneLocked) {
+            MAIN.postDelayed(start, 800);
+            return OK;
+        }
+        g.lockScreenThen(new Runnable() {
+            @Override public void run() {
+                if (token != runToken) return;
+                wake(app);
+                MAIN.postDelayed(start, 1000);
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                if (token != runToken) return;
+                pendingDone = null;
+                if (done != null) done.onDone(false);
+            }
         });
         return OK;
+    }
+
+    /** Ekran o'chiq bo'lsa uyg'otadi (qulf ekrani ko'rinishi uchun). */
+    @SuppressWarnings("deprecation")
+    private static void wake(Context c) {
+        try {
+            PowerManager pm = (PowerManager) c.getSystemService(Context.POWER_SERVICE);
+            if (pm == null) return;
+            PowerManager.WakeLock wl = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                            | PowerManager.ACQUIRE_CAUSES_WAKEUP
+                            | PowerManager.ON_AFTER_RELEASE,
+                    "SayDo:wake");
+            wl.acquire(6000);
+        } catch (Exception ignored) { }
     }
 }

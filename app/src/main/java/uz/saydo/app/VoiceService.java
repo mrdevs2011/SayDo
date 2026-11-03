@@ -330,7 +330,8 @@ public class VoiceService extends Service {
         if (paused || destroyed || idx < 0 || idx >= macros.size()) return;
         JSONObject m = macros.get(idx);
         if (m == null) return;
-        if (Setup.isLocked(this)) {
+        // Qulf ekranida yozilgan makro qulf ekranidan ijro etiladi; boshqalari qulf ochilishini kutadi
+        if (Setup.isLocked(this) && !m.optBoolean("locked", false)) {
             queueUntilUnlock(m);
             return;
         }
