@@ -444,6 +444,14 @@ public final class TriggerMatcher {
     }
 
     /**
+     * Checks if heard utterance matches target trigger with standard fuzzy tolerance.
+     */
+    public static boolean matches(String heard, String trigger) {
+        if (heard == null || trigger == null) return false;
+        return score(norm(heard), norm(trigger)) >= FUZZY;
+    }
+
+    /**
      * Selects the highest scoring trigger above threshold with sibling prefix disambiguation.
      */
     public static int best(List<String> heard, List<String> triggers, double threshold) {

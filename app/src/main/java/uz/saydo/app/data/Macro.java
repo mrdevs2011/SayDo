@@ -12,10 +12,11 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Immutable domain model representing a voice-triggered automation macro.
+ * Immutable domain model representing an advanced voice-triggered automation macro.
+ * Supports aliases, biometric sensitivity flags, parametric variables, and usage telemetry.
  */
 public final class Macro implements Serializable, Comparable<Macro> {
-    private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 2L;
 
     public final String id;
     public final String trigger;
@@ -23,12 +24,26 @@ public final class Macro implements Serializable, Comparable<Macro> {
     public final boolean locked;
     public final long createdAt;
     public final long duration;
+    public final List<String> aliases;
+    public final boolean sensitive;
+    public final String category;
+    public final int usageCount;
+    public final long lastUsedAt;
 
     public Macro(String id, String trigger, List<Gesture> gestures, boolean locked, long createdAt, long duration) {
+        this(id, trigger, gestures, locked, createdAt, duration, Collections.emptyList(), false, "General", 0, 0);
+    }
+
+    public Macro(String id, String trigger, List<Gesture> gestures, boolean locked, long createdAt, long duration,
+                 List<String> aliases, boolean sensitive, String category, int usageCount, long lastUsedAt) {
         this.id = (id != null && !id.trim().isEmpty()) ? id.trim() : UUID.randomUUID().toString();
         this.trigger = (trigger != null) ? trigger.trim().toLowerCase() : "";
         this.locked = locked;
         this.createdAt = (createdAt > 0) ? createdAt : System.currentTimeMillis();
+        this.sensitive = sensitive;
+        this.category = (category != null && !category.trim().isEmpty()) ? category.trim() : "General";
+        this.usageCount = Math.max(0, usageCount);
+        this.lastUsedAt = Math.max(0, lastUsedAt);
 
         if (gestures == null || gestures.isEmpty()) {
             this.gestures = Collections.emptyList();
@@ -38,6 +53,18 @@ public final class Macro implements Serializable, Comparable<Macro> {
                 if (g != null) copy.add(g);
             }
             this.gestures = Collections.unmodifiableList(copy);
+        }
+
+        if (aliases == null || aliases.isEmpty()) {
+            this.aliases = Collections.emptyList();
+        } else {
+            List<String> aCopy = new ArrayList<>(aliases.size());
+            for (String a : aliases) {
+                if (a != null && !a.trim().isEmpty()) {
+                    aCopy.add(a.trim().toLowerCase());
+                }
+            }
+            this.aliases = Collections.unmodifiableList(aCopy);
         }
 
         if (duration > 0) {
@@ -75,12 +102,52 @@ public final class Macro implements Serializable, Comparable<Macro> {
         return duration;
     }
 
+    public List<String> getAliases() {
+        return aliases;
+    }
+
+    public boolean isSensitive() {
+        return sensitive;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public int getUsageCount() {
+        return usageCount;
+    }
+
+    public long getLastUsedAt() {
+        return lastUsedAt;
+    }
+
     public int getGestureCount() {
         return gestures.size();
     }
 
     public boolean hasGestures() {
         return !gestures.isEmpty();
+    }
+
+    public Macro incrementUsage() {
+        return new Macro(id, trigger, gestures, locked, createdAt, duration,
+                aliases, sensitive, category, usageCount + 1, System.currentTimeMillis());
+    }
+
+    public Macro withAliases(List<String> newAliases) {
+        return new Macro(id, trigger, gestures, locked, createdAt, duration,
+                newAliases, sensitive, category, usageCount, lastUsedAt);
+    }
+
+    public Macro withGestures(List<Gesture> newGestures) {
+        return new Macro(id, trigger, newGestures, locked, createdAt, 0,
+                aliases, sensitive, category, usageCount, lastUsedAt);
+    }
+
+    public Macro withSensitive(boolean isSensitive) {
+        return new Macro(id, trigger, gestures, locked, createdAt, duration,
+                aliases, isSensitive, category, usageCount, lastUsedAt);
     }
 
     public JSONObject toJson() {
@@ -91,6 +158,26 @@ public final class Macro implements Serializable, Comparable<Macro> {
             obj.put("locked", locked);
             obj.put("created_at", createdAt);
             obj.put("dur", duration);
+            if (sensitive) {
+                obj.put("sensitive", true);
+            }
+            if (!"General".equals(category)) {
+                obj.put("cat", category);
+            }
+            if (usageCount > 0) {
+                obj.put("use_cnt", usageCount);
+            }
+            if (lastUsedAt > 0) {
+                obj.put("last_used", lastUsedAt);
+            }
+
+            if (aliases != null && !aliases.isEmpty()) {
+                JSONArray aArr = new JSONArray();
+                for (String a : aliases) {
+                    aArr.put(a);
+                }
+                obj.put("aliases", aArr);
+            }
 
             JSONArray gArr = new JSONArray();
             for (Gesture g : gestures) {
@@ -109,7 +196,6 @@ public final class Macro implements Serializable, Comparable<Macro> {
 
         String id = obj.optString("id", "");
         if (id.isEmpty()) {
-            // Generate stable UUID based on trigger and created_at if possible
             long created = obj.optLong("created_at", 0);
             if (created > 0) {
                 id = UUID.nameUUIDFromBytes((trigger + "_" + created).getBytes()).toString();
@@ -121,6 +207,21 @@ public final class Macro implements Serializable, Comparable<Macro> {
         boolean locked = obj.optBoolean("locked", false);
         long createdAt = obj.optLong("created_at", System.currentTimeMillis());
         long duration = obj.optLong("dur", 0);
+        boolean sensitive = obj.optBoolean("sensitive", false);
+        String category = obj.optString("cat", "General");
+        int usageCount = obj.optInt("use_cnt", 0);
+        long lastUsed = obj.optLong("last_used", 0);
+
+        List<String> aliasList = new ArrayList<>();
+        JSONArray aArr = obj.optJSONArray("aliases");
+        if (aArr != null) {
+            for (int i = 0; i < aArr.length(); i++) {
+                String a = aArr.optString(i, "").trim().toLowerCase();
+                if (!a.isEmpty()) {
+                    aliasList.add(a);
+                }
+            }
+        }
 
         List<Gesture> gestureList = new ArrayList<>();
         JSONArray gArr = obj.optJSONArray("gestures");
@@ -133,7 +234,7 @@ public final class Macro implements Serializable, Comparable<Macro> {
             }
         }
 
-        return new Macro(id, trigger, gestureList, locked, createdAt, duration);
+        return new Macro(id, trigger, gestureList, locked, createdAt, duration, aliasList, sensitive, category, usageCount, lastUsed);
     }
 
     @Override
@@ -152,14 +253,17 @@ public final class Macro implements Serializable, Comparable<Macro> {
         return locked == macro.locked &&
                createdAt == macro.createdAt &&
                duration == macro.duration &&
+               sensitive == macro.sensitive &&
+               usageCount == macro.usageCount &&
                Objects.equals(id, macro.id) &&
                Objects.equals(trigger, macro.trigger) &&
-               Objects.equals(gestures, macro.gestures);
+               Objects.equals(gestures, macro.gestures) &&
+               Objects.equals(aliases, macro.aliases);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, trigger, gestures, locked, createdAt, duration);
+        return Objects.hash(id, trigger, gestures, locked, createdAt, duration, aliases, sensitive, usageCount);
     }
 
     @Override
@@ -169,8 +273,8 @@ public final class Macro implements Serializable, Comparable<Macro> {
                 ", trigger='" + trigger + '\'' +
                 ", gestures=" + gestures.size() +
                 ", locked=" + locked +
-                ", createdAt=" + createdAt +
-                ", duration=" + duration +
+                ", sensitive=" + sensitive +
+                ", usageCount=" + usageCount +
                 '}';
     }
 }
