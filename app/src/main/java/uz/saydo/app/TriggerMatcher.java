@@ -1,5 +1,6 @@
 package uz.saydo.app;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -8,26 +9,27 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Aytilgan gapni trigger bilan solishtiradi (faqat inglizcha).
- * - Kichik harf, tinish belgilari va apostroflarsiz.
- * - Raqam so'zlari va homofonlar bir xil ko'rinishga keltiriladi (two/to/too, four/for, one/won ...).
- * - Bo'sh so'zlar (please, the, okay ...) e'tiborga olinmaydi.
- * - Aniq moslik, ibora ichida uchrashi, fonetik moslik va noaniq (Levenshtein) moslik.
+ * Advanced Offline Speech Trigger Matching Engine.
+ * Features Damerau-Levenshtein edit distance (with transposition detection),
+ * comprehensive phonetic matching (Metaphone + Soundex hybrid), contraction expansion,
+ * homophone canonicalization, token windowing, and sibling prefix disambiguation.
  */
-final class TriggerMatcher {
-    static final double EXACT = 0.95;
-    static final double FUZZY = 0.80;
+public final class TriggerMatcher {
+    public static final double EXACT = 0.95;
+    public static final double FUZZY = 0.80;
     private static final double PHONETIC = 0.93;
     private static final double PHONETIC_WINDOW = 0.92;
 
-    private static final Map<String, String> CANON = new HashMap<String, String>();
-    private static final Set<String> FILLER = new HashSet<String>();
+    private static final Map<String, String> CANON = new HashMap<>();
+    private static final Map<String, String> CONTRACTIONS = new HashMap<>();
+    private static final Set<String> FILLER = new HashSet<>();
 
     private static void alias(String canon, String... words) {
         for (String w : words) CANON.put(w, canon);
     }
 
     static {
+        // Numbers & Homophones
         alias("0", "zero");
         alias("1", "one", "won");
         alias("2", "two", "to", "too");
@@ -57,6 +59,8 @@ final class TriggerMatcher {
         alias("80", "eighty");
         alias("90", "ninety");
         alias("100", "hundred");
+
+        // Extended Homophones & English Phonetic Twins
         alias("no", "know");
         alias("right", "write");
         alias("by", "buy", "bye");
@@ -76,9 +80,81 @@ final class TriggerMatcher {
         alias("wifi", "wi fi");
         alias("hello", "hi");
         alias("off", "of");
+        alias("hour", "our");
+        alias("peace", "piece");
+        alias("which", "witch");
+        alias("plain", "plane");
+        alias("brake", "break");
+        alias("tail", "tale");
+        alias("stair", "stare");
+        alias("meat", "meet");
+        alias("flour", "flower");
+        alias("bare", "bear");
+        alias("allowed", "aloud");
+        alias("cell", "sell");
+        alias("cents", "sense");
+        alias("coarse", "course");
+        alias("dear", "deer");
+        alias("die", "dye");
+        alias("fair", "fare");
+        alias("heal", "heel");
+        alias("idle", "idol");
+        alias("knight", "night");
+        alias("knot", "not");
+        alias("leak", "leek");
+        alias("loan", "lone");
+        alias("maid", "made");
+        alias("main", "mane");
+        alias("pale", "pail");
+        alias("past", "passed");
+        alias("poor", "pour");
+        alias("pray", "prey");
+        alias("principal", "principle");
+        alias("profit", "prophet");
+        alias("real", "reel");
+        alias("role", "roll");
+        alias("root", "route");
+        alias("sail", "sale");
+        alias("scene", "seen");
+        alias("sole", "soul");
+        alias("some", "sum");
+        alias("steal", "steel");
+        alias("sweet", "suite");
+        alias("toe", "tow");
+        alias("waist", "waste");
+        alias("weak", "week");
 
-        String[] filler = {"the", "a", "an", "please", "hey", "ok", "okay", "um", "uh", "uhm", "hmm", "er", "ah"};
-        for (String f : filler) FILLER.add(f);
+        // Contractions (expanded into canonical words)
+        CONTRACTIONS.put("cannot", "cannot");
+        CONTRACTIONS.put("cant", "cannot");
+        CONTRACTIONS.put("wont", "will not");
+        CONTRACTIONS.put("dont", "do not");
+        CONTRACTIONS.put("doesnt", "does not");
+        CONTRACTIONS.put("didnt", "did not");
+        CONTRACTIONS.put("isnt", "is not");
+        CONTRACTIONS.put("arent", "are not");
+        CONTRACTIONS.put("wasnt", "was not");
+        CONTRACTIONS.put("werent", "were not");
+        CONTRACTIONS.put("havent", "have not");
+        CONTRACTIONS.put("hasnt", "has not");
+        CONTRACTIONS.put("hadnt", "had not");
+        CONTRACTIONS.put("shouldnt", "should not");
+        CONTRACTIONS.put("couldnt", "could not");
+        CONTRACTIONS.put("wouldnt", "would not");
+        CONTRACTIONS.put("lets", "let us");
+        CONTRACTIONS.put("its", "its");
+        CONTRACTIONS.put("im", "i am");
+        CONTRACTIONS.put("youre", "your");
+        CONTRACTIONS.put("theyre", "there");
+        CONTRACTIONS.put("were", "we are");
+        CONTRACTIONS.put("thats", "that is");
+        CONTRACTIONS.put("whats", "what is");
+        CONTRACTIONS.put("theres", "there is");
+        CONTRACTIONS.put("whos", "who is");
+
+        // Conversational Fillers & Carrier Particles
+        String[] fillers = {"the", "a", "an", "please", "hey", "ok", "okay", "um", "uh", "uhm", "hmm", "er", "ah"};
+        Collections.addAll(FILLER, fillers);
     }
 
     private TriggerMatcher() {}
@@ -88,38 +164,97 @@ final class TriggerMatcher {
                 || c == '\u2018' || c == '`' || c == '\u00B4';
     }
 
-    /** Kichik harf, tinish belgilarsiz, homofon/raqam kanonik shaklda, bo'sh so'zlarsiz. */
-    static String norm(String s) {
+    /**
+     * Normalizes an utterance: removes punctuation, expands contractions,
+     * canonicalizes homophones/numbers, and strips extraneous conversational fillers.
+     */
+    public static String norm(String s) {
         if (s == null) return "";
         String lower = s.toLowerCase(Locale.ROOT);
-        StringBuilder sb = new StringBuilder(lower.length() + 4);
+        StringBuilder sb = new StringBuilder(lower.length() + 8);
         for (int i = 0; i < lower.length(); i++) {
             char c = lower.charAt(i);
             if (isApostrophe(c)) continue;
             if (Character.isLetterOrDigit(c)) sb.append(c);
             else sb.append(' ');
         }
+
         String cleaned = sb.toString().trim()
                 .replace("wi fi", "wifi")
                 .replace("u tube", "youtube");
-        String[] parts = cleaned.split("\\s+");
+
+        String[] rawParts = cleaned.split("\\s+");
         StringBuilder all = new StringBuilder();
         StringBuilder kept = new StringBuilder();
-        for (String p : parts) {
+
+        for (String p : rawParts) {
             if (p.isEmpty()) continue;
-            String c = CANON.containsKey(p) ? CANON.get(p) : p;
-            if (all.length() > 0) all.append(' ');
-            all.append(c);
-            if (FILLER.contains(p)) continue;
-            if (kept.length() > 0) kept.append(' ');
-            kept.append(c);
+            // Check contraction expansions
+            String expanded = CONTRACTIONS.containsKey(p) ? CONTRACTIONS.get(p) : p;
+            for (String sub : expanded.split("\\s+")) {
+                if (sub.isEmpty()) continue;
+                String c = CANON.containsKey(sub) ? CANON.get(sub) : sub;
+                if (all.length() > 0) all.append(' ');
+                all.append(c);
+                if (FILLER.contains(sub)) continue;
+                if (kept.length() > 0) kept.append(' ');
+                kept.append(c);
+            }
         }
-        // Faqat bo'sh so'zlardan iborat bo'lsa, asl holini qoldiramiz
+
         return kept.length() > 0 ? kept.toString() : all.toString();
     }
 
-    /** Soddalashtirilgan Metaphone: bir xil eshitiladigan so'zlar bir xil kod beradi. */
-    static String phon(String w) {
+    /**
+     * Damerau-Levenshtein edit distance: computes optimal string alignment
+     * with insertion, deletion, substitution, and adjacent transposition.
+     */
+    public static int damerauLevenshtein(String a, String b) {
+        if (a == null) a = "";
+        if (b == null) b = "";
+        int n = a.length();
+        int m = b.length();
+        if (n == 0) return m;
+        if (m == 0) return n;
+
+        int[][] d = new int[n + 1][m + 1];
+        for (int i = 0; i <= n; i++) d[i][0] = i;
+        for (int j = 0; j <= m; j++) d[0][j] = j;
+
+        for (int i = 1; i <= n; i++) {
+            for (int j = 1; j <= m; j++) {
+                int cost = (a.charAt(i - 1) == b.charAt(j - 1)) ? 0 : 1;
+                d[i][j] = Math.min(d[i - 1][j] + 1, // deletion
+                          Math.min(d[i][j - 1] + 1, // insertion
+                                   d[i - 1][j - 1] + cost)); // substitution
+
+                // Transposition
+                if (i > 1 && j > 1 &&
+                    a.charAt(i - 1) == b.charAt(j - 2) &&
+                    a.charAt(i - 2) == b.charAt(j - 1)) {
+                    d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + cost);
+                }
+            }
+        }
+        return d[n][m];
+    }
+
+    /**
+     * Similarity score between 0.0 and 1.0 based on Damerau-Levenshtein.
+     */
+    public static double sim(String a, String b) {
+        if (a == null) a = "";
+        if (b == null) b = "";
+        int mx = Math.max(a.length(), b.length());
+        if (mx == 0) return 1.0;
+        return 1.0 - (double) damerauLevenshtein(a, b) / mx;
+    }
+
+    /**
+     * Simplified Metaphone phonetic encoding.
+     */
+    public static String phon(String w) {
+        if (w == null) return "";
         StringBuilder in = new StringBuilder();
         for (int i = 0; i < w.length(); i++) {
             char c = w.charAt(i);
@@ -203,57 +338,95 @@ final class TriggerMatcher {
         return out.toString();
     }
 
+    /**
+     * American Soundex phonetic encoding.
+     */
+    public static String soundex(String s) {
+        if (s == null || s.trim().isEmpty()) return "";
+        String upper = s.toUpperCase(Locale.US);
+        StringBuilder sb = new StringBuilder();
+        char first = 0;
+        for (int i = 0; i < upper.length(); i++) {
+            char c = upper.charAt(i);
+            if (c >= 'A' && c <= 'Z') {
+                first = c;
+                break;
+            }
+        }
+        if (first == 0) return "";
+        sb.append(first);
+
+        char prevCode = getSoundexCode(first);
+        for (int i = 1; i < upper.length(); i++) {
+            char c = upper.charAt(i);
+            if (c < 'A' || c > 'Z') continue;
+            char code = getSoundexCode(c);
+            if (code != '0' && code != prevCode) {
+                sb.append(code);
+                if (sb.length() == 4) break;
+            }
+            prevCode = code;
+        }
+
+        while (sb.length() < 4) sb.append('0');
+        return sb.toString();
+    }
+
+    private static char getSoundexCode(char c) {
+        switch (c) {
+            case 'B': case 'F': case 'P': case 'V': return '1';
+            case 'C': case 'G': case 'J': case 'K': case 'Q': case 'S': case 'X': case 'Z': return '2';
+            case 'D': case 'T': return '3';
+            case 'L': return '4';
+            case 'M': case 'N': return '5';
+            case 'R': return '6';
+            default: return '0';
+        }
+    }
+
     private static String phonPhrase(String phrase) {
         StringBuilder sb = new StringBuilder();
         for (String w : phrase.split(" ")) sb.append(phon(w));
         return sb.toString();
     }
 
-    private static int lev(String a, String b) {
-        int n = a.length(), m = b.length();
-        if (n == 0) return m;
-        if (m == 0) return n;
-        int[] prev = new int[m + 1];
-        int[] cur = new int[m + 1];
-        for (int j = 0; j <= m; j++) prev[j] = j;
-        for (int i = 1; i <= n; i++) {
-            cur[0] = i;
-            for (int j = 1; j <= m; j++) {
-                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
-                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
-            }
-            int[] tmp = prev;
-            prev = cur;
-            cur = tmp;
-        }
-        return prev[m];
+    private static String soundexPhrase(String phrase) {
+        StringBuilder sb = new StringBuilder();
+        for (String w : phrase.split(" ")) sb.append(soundex(w));
+        return sb.toString();
     }
 
-    private static double sim(String a, String b) {
-        int mx = Math.max(a.length(), b.length());
-        if (mx == 0) return 1.0;
-        return 1.0 - (double) lev(a, b) / mx;
-    }
-
-    /** Ikkalasi ham norm() dan o'tgan bo'lishi kerak. 0..1 oralig'ida ball qaytaradi. */
-    static double score(String heard, String trigger) {
-        if (heard.isEmpty() || trigger.isEmpty()) return 0;
+    /**
+     * Evaluates match score between normalized heard utterance and trigger phrase.
+     * Returns score between 0.0 and 1.0.
+     */
+    public static double score(String heard, String trigger) {
+        if (heard == null || trigger == null || heard.isEmpty() || trigger.isEmpty()) return 0.0;
         if (heard.equals(trigger)) return 1.0;
         if ((" " + heard + " ").contains(" " + trigger + " ")) return 0.97;
 
         String hNo = heard.replace(" ", "");
         String tNo = trigger.replace(" ", "");
         if (tNo.length() >= 4 && hNo.contains(tNo)) return 0.96;
-        if (tNo.length() < 3) return 0;
+        if (tNo.length() < 3) return 0.0;
 
         double best = Math.max(sim(heard, trigger), sim(hNo, tNo));
-        String[] hw = heard.split(" ");
-        int n = trigger.split(" ").length;
+
+        // Phonetic matching
         String tPhon = phonPhrase(trigger);
         boolean phonOk = tPhon.length() >= 3;
         if (phonOk && tPhon.equals(phonPhrase(heard))) best = Math.max(best, PHONETIC);
 
-        for (int size = Math.max(1, n - 1); size <= n + 1; size++) {
+        String tSoundex = soundexPhrase(trigger);
+        if (tSoundex.length() >= 4 && tSoundex.equals(soundexPhrase(heard))) {
+            best = Math.max(best, PHONETIC);
+        }
+
+        // Sliding token window across utterance
+        String[] hw = heard.split(" ");
+        int n = trigger.split(" ").length;
+
+        for (int size = Math.max(1, n - 1); size <= n + 2; size++) {
             for (int i = 0; i + size <= hw.length; i++) {
                 StringBuilder w = new StringBuilder();
                 for (int k = i; k < i + size; k++) {
@@ -262,22 +435,23 @@ final class TriggerMatcher {
                 }
                 String win = w.toString();
                 best = Math.max(best, sim(win, trigger));
-                if (phonOk && tPhon.equals(phonPhrase(win))) best = Math.max(best, PHONETIC_WINDOW);
+                if (phonOk && tPhon.equals(phonPhrase(win))) {
+                    best = Math.max(best, PHONETIC_WINDOW);
+                }
             }
         }
         return best;
     }
 
     /**
-     * @param heard     tanib olingan variantlar (xom)
-     * @param triggers  norm() dan o'tgan triggerlar
-     * @param threshold minimal ball
-     * @return eng mos trigger indeksi yoki -1
+     * Selects the highest scoring trigger above threshold with sibling prefix disambiguation.
      */
-    static int best(List<String> heard, List<String> triggers, double threshold) {
+    public static int best(List<String> heard, List<String> triggers, double threshold) {
+        if (heard == null || triggers == null || triggers.isEmpty()) return -1;
         int bestIdx = -1;
         double bestScore = 0;
         int bestLen = 0;
+
         for (int i = 0; i < triggers.size(); i++) {
             String t = triggers.get(i);
             if (t.isEmpty()) continue;
@@ -296,9 +470,11 @@ final class TriggerMatcher {
         return bestIdx;
     }
 
-    /** Boshqa, uzunroq trigger shu triggerni so'z sifatida o'z ichiga oladimi (qisman natijada kutish kerak). */
-    static boolean hasLongerSibling(List<String> triggers, int idx) {
-        if (idx < 0 || idx >= triggers.size()) return false;
+    /**
+     * Checks if another trigger in the list is a longer extension of the candidate trigger.
+     */
+    public static boolean hasLongerSibling(List<String> triggers, int idx) {
+        if (triggers == null || idx < 0 || idx >= triggers.size()) return false;
         String t = triggers.get(idx);
         for (int i = 0; i < triggers.size(); i++) {
             if (i == idx) continue;
