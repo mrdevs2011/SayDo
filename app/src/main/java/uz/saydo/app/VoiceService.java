@@ -5,7 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
 import android.os.Build;
@@ -49,6 +52,12 @@ public class VoiceService extends Service {
 
     private final List<JSONObject> macros = new ArrayList<JSONObject>();
     private final List<String> triggers = new ArrayList<String>();
+    private final List<String> rawTriggers = new ArrayList<String>();
+
+    // Telefon qulfda bo'lganda aytilgan trigger: qulf ochilgach Home'dan ishga tushadi
+    private JSONObject queued;
+    private long queuedUntil;
+    private BroadcastReceiver unlockRx;
 
     private final Runnable listenRunnable = new Runnable() {
         @Override public void run() { listen(); }
@@ -59,7 +68,7 @@ public class VoiceService extends Service {
         super.onCreate();
         NotificationManager nm = getSystemService(NotificationManager.class);
         NotificationChannel ch = new NotificationChannel(
-                CHANNEL, "SayDo tinglash", NotificationManager.IMPORTANCE_LOW);
+                CHANNEL, "SayDo listening", NotificationManager.IMPORTANCE_LOW);
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
     }
@@ -73,7 +82,7 @@ public class VoiceService extends Service {
         }
 
         try {
-            Notification n = buildNotification("Ishga tushmoqda…");
+            Notification n = buildNotification("Starting…");
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             } else {
@@ -81,6 +90,14 @@ public class VoiceService extends Service {
             }
         } catch (Exception e) {
             toast("Could not start microphone service");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        if (!Net.isOnline(this)) {
+            toast("No internet connection");
+            running = false;
+            stopForeground(true);
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -110,6 +127,7 @@ public class VoiceService extends Service {
     public void onDestroy() {
         destroyed = true;
         running = false;
+        unregisterUnlock();
         releaseWakeLock();
         FloatService.refresh(this);
         h.removeCallbacksAndMessages(null);
@@ -139,21 +157,23 @@ public class VoiceService extends Service {
 
     private Intent buildIntent() {
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        // Always English — best free on-device engine on Android (Google Speech)
+        // Qisqa buyruqlar uchun eng mos model; til har doim inglizcha (en-US)
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
         i.putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true);
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 8);
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
-        // Prefer on-device model when available (lower latency, better battery, works offline)
-        try {
-            i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
-        } catch (Exception ignored) { }
-        // Bias toward short commands
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 900);
+        // Internet shart, shuning uchun eng aniq (online) tanishdan foydalanamiz
+        i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
+        i.putExtra("android.speech.extra.MASK_OFFENSIVE_WORDS", false);
+        // Foydalanuvchi triggerlariga yo'naltirish (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33 && !rawTriggers.isEmpty()) {
+            i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, new ArrayList<String>(rawTriggers));
+        }
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800);
         i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 400);
         return i;
     }
@@ -161,6 +181,7 @@ public class VoiceService extends Service {
     private void loadMacros() {
         macros.clear();
         triggers.clear();
+        rawTriggers.clear();
         try {
             JSONArray arr = new JSONArray(Store.getMacros(this));
             for (int i = 0; i < arr.length(); i++) {
@@ -168,6 +189,7 @@ public class VoiceService extends Service {
                 if (o == null) continue;
                 macros.add(o);
                 triggers.add(TriggerMatcher.norm(o.optString("trigger", "")));
+                rawTriggers.add(o.optString("trigger", ""));
             }
         } catch (Exception ignored) { }
     }
@@ -187,6 +209,12 @@ public class VoiceService extends Service {
         }
         if (FloatService.recording) {
             scheduleListen(800);
+            return;
+        }
+        if (!Net.isOnline(this)) {
+            running = false;
+            stopForeground(true);
+            stopSelf();
             return;
         }
         loadMacros();
@@ -228,13 +256,13 @@ public class VoiceService extends Service {
         @Override
         public void onPartialResults(Bundle partialResults) {
             // Qisman natijada faqat juda aniq moslikda darhol ishga tushiramiz.
-            handleResults(partialResults, TriggerMatcher.EXACT);
+            handleResults(partialResults, TriggerMatcher.EXACT, true);
         }
 
         @Override
         public void onResults(Bundle results) {
             errorStreak = 0;
-            if (!handleResults(results, TriggerMatcher.FUZZY)) {
+            if (!handleResults(results, TriggerMatcher.FUZZY, false)) {
                 scheduleListen(200);
             }
         }
@@ -248,6 +276,18 @@ public class VoiceService extends Service {
                 case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
                     errorStreak = 0;
                     delay = 200;
+                    break;
+                case SpeechRecognizer.ERROR_NETWORK:
+                case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                case SpeechRecognizer.ERROR_SERVER:
+                    if (!Net.isOnline(VoiceService.this)) {
+                        running = false;
+                        stopForeground(true);
+                        stopSelf();
+                        return;
+                    }
+                    errorStreak++;
+                    delay = Math.min(1000L * errorStreak, 8000L);
                     break;
                 case SpeechRecognizer.ERROR_CLIENT:
                     delay = 400;
@@ -271,13 +311,15 @@ public class VoiceService extends Service {
         }
     };
 
-    private boolean handleResults(Bundle b, double threshold) {
+    private boolean handleResults(Bundle b, double threshold, boolean partial) {
         if (b == null || destroyed || paused || FloatService.recording) return false;
         ArrayList<String> heard = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         if (heard == null || heard.isEmpty()) return false;
         if (System.currentTimeMillis() < cooldownUntil) return false;
         int idx = TriggerMatcher.best(heard, triggers, threshold);
         if (idx < 0 || idx >= macros.size()) return false;
+        // Qisman natijada uzunroq trigger bo'lishi mumkin bo'lsa, yakuniy natijani kutamiz
+        if (partial && TriggerMatcher.hasLongerSibling(triggers, idx)) return false;
         fire(idx);
         return true;
     }
@@ -286,8 +328,52 @@ public class VoiceService extends Service {
 
     private void fire(int idx) {
         if (paused || destroyed || idx < 0 || idx >= macros.size()) return;
-        final JSONObject m = macros.get(idx);
+        JSONObject m = macros.get(idx);
         if (m == null) return;
+        if (Setup.isLocked(this)) {
+            queueUntilUnlock(m);
+            return;
+        }
+        runMacro(m);
+    }
+
+    /** Qulf ekranida aytilgan: qulf ochilgach (45 soniya ichida) Home'dan ishga tushadi. */
+    private void queueUntilUnlock(JSONObject m) {
+        queued = m;
+        queuedUntil = System.currentTimeMillis() + 45000;
+        cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
+        updateNotification("Unlock your phone to run: " + m.optString("trigger", ""));
+        if (unlockRx != null) return;
+        unlockRx = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                final JSONObject q = queued;
+                boolean fresh = q != null && System.currentTimeMillis() < queuedUntil;
+                queued = null;
+                unregisterUnlock();
+                if (!fresh || destroyed) return;
+                h.postDelayed(new Runnable() {
+                    @Override public void run() { runMacro(q); }
+                }, 700);
+            }
+        };
+        try {
+            IntentFilter f = new IntentFilter(Intent.ACTION_USER_PRESENT);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(unlockRx, f, Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(unlockRx, f);
+        } catch (Exception e) {
+            unlockRx = null;
+        }
+    }
+
+    private void unregisterUnlock() {
+        if (unlockRx != null) {
+            try { unregisterReceiver(unlockRx); } catch (Exception ignored) { }
+            unlockRx = null;
+        }
+    }
+
+    private void runMacro(final JSONObject m) {
+        if (paused || destroyed || m == null) return;
         final String name = m.optString("trigger", "");
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
         paused = true;
@@ -317,9 +403,9 @@ public class VoiceService extends Service {
                     listen();
                 }
             }, 2000);
-        } else if (st == Runner.INVALID) {
+        } else if (st == Runner.INVALID || st == Runner.LOCKED || st == Runner.OFFLINE) {
             paused = false;
-            scheduleListen(500);
+            scheduleListen(st == Runner.INVALID ? 500 : 1500);
         }
     }
 
@@ -336,7 +422,7 @@ public class VoiceService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
 
         Notification.Action stopAction = new Notification.Action.Builder(
-                Icon.createWithResource(this, R.drawable.ic_stat_close), "To'xtatish", pStop).build();
+                Icon.createWithResource(this, R.drawable.ic_stat_close), "Stop", pStop).build();
 
         return new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_mic)
