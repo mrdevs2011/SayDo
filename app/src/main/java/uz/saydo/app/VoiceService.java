@@ -495,6 +495,36 @@ public class VoiceService extends Service implements
                 if (heard != null && !heard.isEmpty()) {
                     String top = heard.get(0);
                     int idx = TriggerMatcher.best(heard, cachedTriggers, TriggerMatcher.FUZZY);
+
+                    if (idx < 0) {
+                        for (int mIdx = 0; mIdx < cachedMacros.size(); mIdx++) {
+                            Macro candidate = cachedMacros.get(mIdx);
+                            if (uz.saydo.app.kernel.voice.ParametricMatcher.hasSlots(candidate.trigger)) {
+                                uz.saydo.app.kernel.voice.ParametricMatcher.MatchResult pRes =
+                                        uz.saydo.app.kernel.voice.ParametricMatcher.match(top, candidate.trigger);
+                                if (pRes.matched) {
+                                    for (java.util.Map.Entry<String, String> entry : pRes.variables.entrySet()) {
+                                        uz.saydo.app.kernel.workflow.ContextMemory.getInstance().set("{" + entry.getKey() + "}", entry.getValue());
+                                        uz.saydo.app.kernel.workflow.ContextMemory.getInstance().set(entry.getKey(), entry.getValue());
+                                    }
+                                    idx = mIdx;
+                                    break;
+                                }
+                            }
+                            if (uz.saydo.app.kernel.voice.MultilingualMatcher.matchesMultilingual(top, candidate.trigger)) {
+                                idx = mIdx;
+                                break;
+                            }
+                            for (String alias : candidate.aliases) {
+                                if (uz.saydo.app.kernel.voice.MultilingualMatcher.matchesMultilingual(top, alias)) {
+                                    idx = mIdx;
+                                    break;
+                                }
+                            }
+                            if (idx >= 0) break;
+                        }
+                    }
+
                     if (idx >= 0 && idx < cachedMacros.size()) {
                         Macro matched = cachedMacros.get(idx);
                         updateNotification("Running: " + matched.trigger);

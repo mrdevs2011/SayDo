@@ -24,6 +24,7 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
     interface Listener {
         void onPlay(Macro macro);
         void onDelete(String macroId);
+        void onEdit(Macro macro);
     }
 
     private final List<Macro> items = new ArrayList<>();
@@ -117,6 +118,14 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
             @Override
             public void onClick(View v) {
                 if (listener != null) listener.onDelete(m.id);
+            }
+        });
+
+        h.itemView.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                if (listener != null) listener.onEdit(m);
+                return true;
             }
         });
     }

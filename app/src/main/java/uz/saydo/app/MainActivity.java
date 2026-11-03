@@ -170,6 +170,7 @@ public class MainActivity extends AppCompatActivity implements
         boolean hasItems = !macros.isEmpty();
         list.setVisibility(hasItems ? View.VISIBLE : View.GONE);
         empty.setVisibility(hasItems ? View.GONE : View.VISIBLE);
+        uz.saydo.app.kernel.ui.AppShortcutManager.updateShortcuts(this);
     }
 
     public void refreshUi() {
@@ -346,6 +347,14 @@ public class MainActivity extends AppCompatActivity implements
         } catch (Exception e) {
             toast("Could not run");
         }
+    }
+
+    @Override
+    public void onEdit(Macro macro) {
+        if (macro == null) return;
+        Intent intent = new Intent(this, uz.saydo.app.kernel.ui.MacroStudioActivity.class);
+        intent.putExtra(uz.saydo.app.kernel.ui.MacroStudioActivity.EXTRA_MACRO_ID, macro.id);
+        startActivity(intent);
     }
 
     @Override
