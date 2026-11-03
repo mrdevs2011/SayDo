@@ -40,11 +40,9 @@ public class GestureService extends AccessibilityService {
         void onDone(boolean completed);
     }
 
-    private static final long TAP_MS = 30;
-    private static final long MIN_HOLD_MS = 400;
+    private static final long TAP_MS = 20;
+    private static final long MIN_HOLD_MS = 380;
     private static final long MIN_SWIPE_MS = 20;
-    private static final long FIRST_DELAY_MS = 120;
-    private static final long MIN_GAP_MS = 10;
 
     private static final class G {
         String type = "tap";
@@ -84,7 +82,6 @@ public class GestureService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Ekran mazmuni o'qilmaydi. Faqat qaysi ilova oldinda ekanini (Home'dami) bilamiz.
         if (event == null) return;
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             CharSequence p = event.getPackageName();
@@ -92,6 +89,14 @@ public class GestureService extends AccessibilityService {
                 String pkg = p.toString();
                 if (!ignoredPackages().contains(pkg)) lastPkg = pkg;
             }
+        }
+        // Background resilience: agar SayDo yoqilgan bo'lsa va VoiceService to'xtab qolgan bo'lsa, qayta ishga tushiramiz
+        if (Store.isEnabled(this) && !VoiceService.running && Setup.missing(this) == Setup.OK) {
+            try {
+                Intent vi = new Intent(this, VoiceService.class);
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(vi);
+                else startService(vi);
+            } catch (Exception ignored) { }
         }
     }
 
@@ -135,27 +140,31 @@ public class GestureService extends AccessibilityService {
      * (kerak bo'lsa Home'ni qayta bosadi), keyin {@code after} ni ishga tushiradi.
      */
     void goHomeThen(final Runnable after) {
+        if (onHome()) {
+            homeHandler.postDelayed(after, 60);
+            return;
+        }
         performGlobalAction(GLOBAL_ACTION_HOME);
         final long t0 = SystemClock.uptimeMillis();
         homeHandler.postDelayed(new Runnable() {
             boolean resent = false;
             @Override public void run() {
                 long el = SystemClock.uptimeMillis() - t0;
-                if (el >= 300 && onHome()) {
-                    homeHandler.postDelayed(after, 250);
+                if (el >= 180 && onHome()) {
+                    homeHandler.postDelayed(after, 80);
                     return;
                 }
-                if (!resent && el > 900) {
+                if (!resent && el > 700) {
                     resent = true;
                     performGlobalAction(GLOBAL_ACTION_HOME);
                 }
-                if (el > 2200) {
-                    homeHandler.postDelayed(after, 250);
+                if (el > 1600) {
+                    homeHandler.postDelayed(after, 80);
                     return;
                 }
-                homeHandler.postDelayed(this, 100);
+                homeHandler.postDelayed(this, 50);
             }
-        }, 150);
+        }, 80);
     }
 
     /**
@@ -256,7 +265,7 @@ public class GestureService extends AccessibilityService {
             return;
         }
         final G g = list.get(i);
-        long gap = (i == 0) ? FIRST_DELAY_MS : Math.max(g.st - list.get(i - 1).et, MIN_GAP_MS);
+        long gap = (i == 0) ? Math.min(g.st, 60) : Math.max(0, g.st - list.get(i - 1).et);
 
         handler.postDelayed(new Runnable() {
             @Override
@@ -270,7 +279,7 @@ public class GestureService extends AccessibilityService {
                     // Tizim animatsiyasi tugashini kutamiz
                     handler.postDelayed(new Runnable() {
                         @Override public void run() { step(list, i + 1, tok, okGlobal ? failures : failures + 1); }
-                    }, 350);
+                    }, 250);
                     return;
                 }
                 GestureDescription gd;

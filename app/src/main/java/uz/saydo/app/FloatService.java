@@ -639,11 +639,7 @@ public class FloatService extends Service {
         setRecordTouchable(false);
         boolean ok = svc.injectNow(stroke, new Runnable() {
             @Override public void run() {
-                h.postDelayed(new Runnable() {
-                    @Override public void run() {
-                        if (tok == passToken) setRecordTouchable(true);
-                    }
-                }, 10);
+                if (tok == passToken) setRecordTouchable(true);
             }
         });
         if (!ok) {
@@ -662,45 +658,16 @@ public class FloatService extends Service {
     // ============================================================ record view
 
     private final class RecordView extends View {
-        private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path livePath = new Path();
-        private float lastX, lastY;
         private boolean fingerDown;
 
         RecordView(Context ctx) {
             super(ctx);
-            setBackgroundColor(Color.TRANSPARENT); // ilova ko'rinib tursin
+            setBackgroundColor(Color.TRANSPARENT);
             setClickable(true);
-            borderPaint.setColor(Color.argb(210, 255, 59, 48));
-            borderPaint.setStyle(Paint.Style.STROKE);
-            borderPaint.setStrokeWidth(3f * dens);
-            dotPaint.setColor(Color.argb(220, 0, 122, 255));
-            dotPaint.setStyle(Paint.Style.FILL);
-            linePaint.setColor(Color.argb(200, 0, 122, 255));
-            linePaint.setStyle(Paint.Style.STROKE);
-            linePaint.setStrokeWidth(6f * dens);
-            linePaint.setStrokeCap(Paint.Cap.ROUND);
-            linePaint.setStrokeJoin(Paint.Join.ROUND);
         }
 
         void clearVisual() {
             fingerDown = false;
-            livePath.reset();
-            invalidate();
-        }
-
-        @Override
-        protected void onDraw(Canvas c) {
-            super.onDraw(c);
-            float bw = borderPaint.getStrokeWidth() / 2f;
-            c.drawRect(bw, bw, getWidth() - bw, getHeight() - bw, borderPaint);
-            if (!fingerDown) return;
-            if (!livePath.isEmpty()) {
-                c.drawPath(livePath, linePaint);
-            }
-            c.drawCircle(lastX, lastY, 10f * dens, dotPaint);
         }
 
         @Override
@@ -719,10 +686,6 @@ public class FloatService extends Service {
                 case MotionEvent.ACTION_DOWN:
                     finishStroke(false, false);
                     fingerDown = true;
-                    lastX = x;
-                    lastY = y;
-                    livePath.reset();
-                    livePath.moveTo(x, y);
                     strokeStartElapsed = SystemClock.uptimeMillis() - recStartElapsed;
                     try {
                         curStroke = new JSONObject();
@@ -736,7 +699,6 @@ public class FloatService extends Service {
                         p0.put("t", 0);
                         curPath.put(p0);
                     } catch (Exception ignored) { }
-                    invalidate();
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     if (!fingerDown) return true;
@@ -750,7 +712,6 @@ public class FloatService extends Service {
                         // Raw koordinatalarni hisoblash (offset tuzatish)
                         float hrx = hx + (e.getRawX() - e.getX());
                         float hry = hy + (e.getRawY() - e.getY());
-                        livePath.lineTo(hrx, hry);
                         if (curPath != null && curPath.length() < MAX_PATH_POINTS) {
                             long htAbs = e.getHistoricalEventTime(hi);
                             long strokeT = Math.max(0, htAbs - strokeStartAbs);
@@ -763,9 +724,6 @@ public class FloatService extends Service {
                             } catch (Exception ignored) { }
                         }
                     }
-                    lastX = x;
-                    lastY = y;
-                    livePath.lineTo(x, y);
                     if (curPath != null && curPath.length() < MAX_PATH_POINTS) {
                         try {
                             JSONObject p = new JSONObject();
@@ -775,7 +733,6 @@ public class FloatService extends Service {
                             curPath.put(p);
                         } catch (Exception ignored) { }
                     }
-                    invalidate();
                     return true;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
@@ -783,8 +740,6 @@ public class FloatService extends Service {
                         finishStroke(e.getActionMasked() == MotionEvent.ACTION_CANCEL,
                                 e.getActionMasked() == MotionEvent.ACTION_UP);
                         fingerDown = false;
-                        livePath.reset();
-                        invalidate();
                     }
                     return true;
             }
