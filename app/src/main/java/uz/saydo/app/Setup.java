@@ -13,29 +13,26 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.widget.Toast;
 
+import uz.saydo.app.data.SettingsRepository;
+import uz.saydo.app.util.OemPermissionHelper;
+
 /**
- * Avtomatik sozlash zanjiri (Auto Start onboarding):
- * Foydalanuvchi START bosganda barcha zarur ruxsatlar va konfiguratsiyalarni
- * ketma-ket aniqlaydi va tegishli Android sozlamasini ochib beradi:
- * 1. Overlay (Display over other apps)
- * 2. Accessibility (GestureService)
- * 3. Microphone (RECORD_AUDIO)
- * 4. Notifications (POST_NOTIFICATIONS, Android 13+)
- * 5. Battery optimization (Doze mode exemption)
- * 6. Offline voice package / Voice input setup
+ * Robust Onboarding & Permission Resolution Engine.
+ * Evaluates real-time device capability and directs user through a zero-friction sequential flow.
  */
-final class Setup {
-    static final int OK = 0;
-    static final int NEED_OVERLAY = 1;
-    static final int NEED_ACCESSIBILITY = 2;
-    static final int NEED_MIC = 3;
-    static final int NEED_NOTIF = 4;
-    static final int NEED_BATTERY = 5;
-    static final int NEED_VOICE_PACK = 6;
+public final class Setup {
+    public static final int OK = 0;
+    public static final int NEED_OVERLAY = 1;
+    public static final int NEED_ACCESSIBILITY = 2;
+    public static final int NEED_MIC = 3;
+    public static final int NEED_NOTIF = 4;
+    public static final int NEED_BATTERY = 5;
+    public static final int NEED_VOICE_PACK = 6;
 
     private Setup() {}
 
-    static boolean accessibilityOn(Context c) {
+    public static boolean accessibilityOn(Context c) {
+        if (c == null) return false;
         try {
             if (GestureService.instance != null) return true;
             String enabled = Settings.Secure.getString(
@@ -46,22 +43,24 @@ final class Setup {
                 ComponentName cn = ComponentName.unflattenFromString(part);
                 if (me.equals(cn)) return true;
             }
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) {
+        }
         return false;
     }
 
-    static boolean isBatteryOptimizationIgnored(Context c) {
+    public static boolean isBatteryOptimizationIgnored(Context c) {
+        if (c == null) return true;
         if (Build.VERSION.SDK_INT < 23) return true;
         try {
             PowerManager pm = (PowerManager) c.getSystemService(Context.POWER_SERVICE);
             return pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName());
-        } catch (Exception e) {
+        } catch (Throwable e) {
             return true;
         }
     }
 
-    /** Birinchi yetishmayotgan qadam yoki OK. */
-    static int missing(Context c) {
+    public static int missing(Context c) {
+        if (c == null) return OK;
         if (!Settings.canDrawOverlays(c)) return NEED_OVERLAY;
         if (!accessibilityOn(c)) return NEED_ACCESSIBILITY;
         if (c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -70,25 +69,27 @@ final class Setup {
         if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             return NEED_NOTIF;
         }
-        if (Build.VERSION.SDK_INT >= 23 && !isBatteryOptimizationIgnored(c) && !Store.batteryAsked(c)) {
+        SettingsRepository settings = SettingsRepository.getInstance(c);
+        if (Build.VERSION.SDK_INT >= 23 && !isBatteryOptimizationIgnored(c) && !settings.isBatteryAsked()) {
             return NEED_BATTERY;
         }
-        if (!Store.voiceSetupGuided(c)) {
+        if (!settings.isVoiceGuided()) {
             return NEED_VOICE_PACK;
         }
         return OK;
     }
 
-    static boolean isLocked(Context c) {
+    public static boolean isLocked(Context c) {
+        if (c == null) return false;
         try {
             KeyguardManager km = (KeyguardManager) c.getSystemService(Context.KEYGUARD_SERVICE);
             return km != null && km.isKeyguardLocked();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             return false;
         }
     }
 
-    static Intent accessibilityIntent(Context c) {
+    public static Intent accessibilityIntent(Context c) {
         Intent i = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
         String flat = new ComponentName(c, GestureService.class).flattenToString();
         Bundle args = new Bundle();
@@ -98,33 +99,50 @@ final class Setup {
         return i;
     }
 
-    /** Oflayn ovoz kiritish sozlamalari ekranini ochadi */
-    static void openVoiceSettings(Context c) {
+    public static void openVoiceSettings(Context c) {
+        if (c == null) return;
+        // 1. Google Speech Recognition offline language packs
+        try {
+            Intent googleSpeechIntent = new Intent("com.google.android.voicesearch.action.SETTINGS");
+            googleSpeechIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (OemPermissionHelper.canResolveIntent(c, googleSpeechIntent)) {
+                c.startActivity(googleSpeechIntent);
+                Toast.makeText(c.getApplicationContext(), "Offline speech recognition > Install English (US)", Toast.LENGTH_LONG).show();
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
+
+        // 2. Standard Voice Input Settings
         try {
             Intent i = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             c.startActivity(i);
-            Toast.makeText(c.getApplicationContext(), "Offline speech recognition > English (US) pack", Toast.LENGTH_LONG).show();
+            Toast.makeText(c.getApplicationContext(), "Voice input > Offline speech recognition > English (US)", Toast.LENGTH_LONG).show();
             return;
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) {
+        }
 
+        // 3. Fallback Locale Settings
         try {
             Intent i = new Intent(Settings.ACTION_LOCALE_SETTINGS);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             c.startActivity(i);
-            Toast.makeText(c.getApplicationContext(), "Voice input > Offline speech recognition", Toast.LENGTH_LONG).show();
+            Toast.makeText(c.getApplicationContext(), "Ensure English (US) voice input is enabled", Toast.LENGTH_LONG).show();
             return;
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) {
+        }
 
         try {
             Intent i = new Intent(Settings.ACTION_SETTINGS);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             c.startActivity(i);
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) {
+        }
     }
 
-    /** Berilgan qadam uchun kerakli sozlama ekranini ochadi. */
-    static void route(Context c, int step) {
+    public static void route(Context c, int step) {
+        if (c == null) return;
         Intent i;
         String msg;
         switch (step) {
@@ -146,6 +164,14 @@ final class Setup {
                 msg = "Allow notifications for background service";
                 break;
             case NEED_BATTERY:
+                SettingsRepository.getInstance(c).setBatteryAsked(true);
+                // Attempt OEM deep power management first
+                if (OemPermissionHelper.launchBestAutostartSetting(c)) {
+                    Toast.makeText(c.getApplicationContext(),
+                            "Allow Autostart / Unrestricted background battery for SayDo",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
                 if (Build.VERSION.SDK_INT >= 23) {
                     i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                             Uri.parse("package:" + c.getPackageName()));
@@ -155,6 +181,7 @@ final class Setup {
                 }
                 break;
             case NEED_VOICE_PACK:
+                SettingsRepository.getInstance(c).setVoiceGuided(true);
                 openVoiceSettings(c);
                 return;
             default:
@@ -164,7 +191,7 @@ final class Setup {
         try {
             c.startActivity(i);
             Toast.makeText(c.getApplicationContext(), msg, Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             Toast.makeText(c.getApplicationContext(), "Could not open settings", Toast.LENGTH_SHORT).show();
         }
     }
