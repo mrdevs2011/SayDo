@@ -66,7 +66,8 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
         int n = g != null ? g.length() : 0;
         double secs = m.optLong("dur", 0) / 1000.0;
         h.title.setText(trigger);
-        h.meta.setText(n + " actions · " + String.format(java.util.Locale.US, "%.1f", secs) + "s");
+        h.meta.setText(n + " actions · " + String.format(java.util.Locale.US, "%.1f", secs) + "s"
+                + (m.optBoolean("locked", false) ? " · from lock screen" : ""));
 
         final int pos = position;
         h.btnPlay.setOnClickListener(new View.OnClickListener() {

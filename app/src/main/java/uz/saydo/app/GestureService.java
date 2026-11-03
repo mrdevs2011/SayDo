@@ -159,6 +159,31 @@ public class GestureService extends AccessibilityService {
         }, 150);
     }
 
+    /**
+     * Ekranni qulflaydi (Android 9+) va qulf ekrani chiqquncha kutadi.
+     * Qulflab bo'lmasa {@code fail} chaqiriladi.
+     */
+    void lockScreenThen(final Runnable ok, final Runnable fail) {
+        if (Build.VERSION.SDK_INT < 28 || !performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)) {
+            homeHandler.post(fail);
+            return;
+        }
+        final long t0 = SystemClock.uptimeMillis();
+        homeHandler.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (Setup.isLocked(GestureService.this)) {
+                    ok.run();
+                    return;
+                }
+                if (SystemClock.uptimeMillis() - t0 > 2500) {
+                    fail.run();
+                    return;
+                }
+                homeHandler.postDelayed(this, 150);
+            }
+        }, 400);
+    }
+
     @Override
     public void onInterrupt() {
         cancel();

@@ -94,6 +94,8 @@ public class FloatService extends Service {
     private long downAt;
 
     private String pendingTrigger = "";
+    /** Yozish qulf ekranidan boshlandimi (qulf ekranida yozilgan makro qulf ekranidan ijro etiladi). */
+    private boolean lockedRec = false;
     private final List<JSONObject> gestures = new ArrayList<JSONObject>();
     private long recStartElapsed;
     private JSONObject curStroke;
@@ -419,6 +421,14 @@ public class FloatService extends Service {
             return;
         }
         final String name = t;
+        if (Setup.isLocked(this)) {
+            // Qulf ekrani: Home kerak emas. Yozish qulf ekranining o'zidan boshlanadi,
+            // slide va parol kiritish ham yoziladi.
+            lockedRec = true;
+            beginRecording(name);
+            return;
+        }
+        lockedRec = false;
         g.goHomeThen(new Runnable() {
             @Override public void run() {
                 if (bubble == null) return;
@@ -506,6 +516,7 @@ public class FloatService extends Service {
                     dur = Math.max(0, last.optLong("et", 0) - first.optLong("st", 0));
                 }
                 m.put("dur", dur);
+                m.put("locked", lockedRec);
                 m.put("ts", System.currentTimeMillis());
                 arr.put(m);
                 Store.saveMacros(this, arr.toString());
@@ -517,6 +528,7 @@ public class FloatService extends Service {
             toast("No actions recorded");
         }
         pendingTrigger = "";
+        lockedRec = false;
         gestures.clear();
     }
 
