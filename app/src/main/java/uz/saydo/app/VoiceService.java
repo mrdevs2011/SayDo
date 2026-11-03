@@ -12,6 +12,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -24,73 +27,118 @@ import android.speech.RecognitionSupport;
 import android.speech.RecognitionSupportCallback;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.util.Log;
 import android.widget.Toast;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+import uz.saydo.app.data.Macro;
+import uz.saydo.app.data.MacroRepository;
+import uz.saydo.app.data.SettingsRepository;
 
 /**
- * Foreground (mikrofon) servis: ovozni 100% offline va fonda doimiy tinglaydi,
- * trigger so'z aytilsa mos makroni GestureService orqali bajaradi.
+ * Production-hardened Continuous Offline Speech Recognition Engine.
+ * Operates under a formalized Finite State Machine (FSM):
+ * STOPPED -> PREPARING -> LISTENING -> PROCESSING -> EXECUTING_MACRO -> COOLDOWN -> BACKOFF_RECOVERY.
+ * Resilient against all 13+ Android SpeechRecognizer errors, audio focus changes,
+ * screen power states, and lock-screen macro queuing.
  */
-public class VoiceService extends Service {
+public class VoiceService extends Service implements
+        MacroRepository.OnMacrosChangedListener,
+        SettingsRepository.Listener {
 
-    static final String ACTION_STOP = "uz.saydo.app.STOP";
-    private static final String CHANNEL = "vf_listen";
+    private static final String TAG = "VoiceService";
+    public static final String ACTION_STOP = "uz.saydo.app.STOP";
+    private static final String CHANNEL_ID = "vf_listen";
     private static final int NOTIF_ID = 17;
-    private static final long COOLDOWN_MS = 2500;
-    private static final long WATCHDOG_MS = 10000;
 
-    /** Servis hozir ishlayaptimi — UI shu bayroqni o'qiydi. */
-    static volatile boolean running = false;
+    private static final long COOLDOWN_MS = 1800;
+    private static final long WATCHDOG_MS = 10000;
+    private static final long GUARD_INTERVAL_MS = 250;
+
+    public static volatile boolean running = false;
+
+    public enum State {
+        STOPPED,
+        PREPARING,
+        LISTENING,
+        PROCESSING,
+        EXECUTING_MACRO,
+        COOLDOWN,
+        BACKOFF_RECOVERY
+    }
+
+    private volatile State state = State.STOPPED;
+
+    public interface StateListener {
+        void onStateChanged(State state, String statusText);
+    }
+
+    private static final List<StateListener> stateListeners = new CopyOnWriteArrayList<>();
+
+    public static void addStateListener(StateListener l) {
+        if (l != null && !stateListeners.contains(l)) {
+            stateListeners.add(l);
+        }
+    }
+
+    public static void removeStateListener(StateListener l) {
+        if (l != null) {
+            stateListeners.remove(l);
+        }
+    }
 
     private final Handler h = new Handler(Looper.getMainLooper());
     private PowerManager.WakeLock wakeLock;
     private SpeechRecognizer recognizer;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
 
     private boolean destroyed = false;
-    private boolean paused = false;      // makro bajarilayotganda tinglamaymiz
+    private int consecutiveErrors = 0;
     private long cooldownUntil = 0;
-    private int errorStreak = 0;
+    private boolean callPaused = false;
+    private boolean modelDownloadChecked = false;
 
-    private final List<JSONObject> macros = new ArrayList<JSONObject>();
-    private final List<String> triggers = new ArrayList<String>();
-    private final List<String> rawTriggers = new ArrayList<String>();
+    // Macro Cache directly synced from MacroRepository
+    private final List<Macro> cachedMacros = new CopyOnWriteArrayList<>();
+    private final List<String> cachedTriggers = new CopyOnWriteArrayList<>();
+    private final List<String> cachedRawTriggers = new CopyOnWriteArrayList<>();
 
-    // Telefon qulfda bo'lganda aytilgan trigger: qulf ochilgach Home'dan ishga tushadi
-    private JSONObject queued;
-    private long queuedUntil;
-    private BroadcastReceiver screenRx;
+    // Lock-screen queued macro
+    private Macro queuedMacro;
+    private long queuedMacroExpiry;
+    private BroadcastReceiver screenReceiver;
 
-    private final Runnable listenRunnable = new Runnable() {
-        @Override public void run() { listen(); }
-    };
+    private final Runnable listenRunnable = this::startListeningInternal;
 
     private final Runnable watchdogRunnable = new Runnable() {
         @Override
         public void run() {
-            if (destroyed || paused) return;
-            // Recognizer javobsiz qotib qolsa, qayta tiklaymiz
-            destroyRecognizer();
-            createRecognizer();
-            scheduleListen(100);
+            if (destroyed || state == State.STOPPED || state == State.EXECUTING_MACRO) return;
+            Log.w(TAG, "SpeechRecognizer watchdog triggered in state: " + state);
+            transitionTo(State.BACKOFF_RECOVERY);
+            recreateRecognizerSafely();
+            scheduleListen(GUARD_INTERVAL_MS);
         }
     };
 
     @Override
     public void onCreate() {
         super.onCreate();
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        if (nm != null) {
-            NotificationChannel ch = new NotificationChannel(
-                    CHANNEL, "SayDo listening", NotificationManager.IMPORTANCE_LOW);
-            ch.setShowBadge(false);
-            nm.createNotificationChannel(ch);
-        }
+        createNotificationChannel();
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        setupAudioFocus();
         registerScreenReceiver();
+
+        // Reactive repository subscriptions
+        MacroRepository.getInstance(this).addListener(this);
+        SettingsRepository.getInstance(this).addListener(this);
+        updateCachedMacros(MacroRepository.getInstance(this).getAll());
     }
 
     @Override
@@ -108,34 +156,35 @@ public class VoiceService extends Service {
             } else {
                 startForeground(NOTIF_ID, n);
             }
-        } catch (Exception e) {
-            toast("Could not start microphone service");
+        } catch (Throwable e) {
+            Log.e(TAG, "Could not start microphone foreground service", e);
             stopSelf();
             return START_NOT_STICKY;
         }
 
         running = true;
         destroyed = false;
+        callPaused = false;
         acquireWakeLock();
         FloatService.refresh(this);
 
-        boolean canRecognize = SpeechRecognizer.isRecognitionAvailable(this)
+        boolean available = SpeechRecognizer.isRecognitionAvailable(this)
                 || (Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this));
-        if (!canRecognize) {
-            toast("Speech recognition not available on this device");
+        if (!available) {
+            toast("Speech recognition is not available on this device");
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (recognizer == null) createRecognizer();
-        h.removeCallbacks(listenRunnable);
-        h.post(listenRunnable);
+
+        transitionTo(State.PREPARING);
+        recreateRecognizerSafely();
+        scheduleListen(100);
         return START_STICKY;
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        // App recent apps'dan o'chirilganda ham servis tirik qolishi kerak
-        if (Store.isEnabled(this)) {
+        if (SettingsRepository.getInstance(this).isMasterOn()) {
             try {
                 Intent restart = new Intent(getApplicationContext(), VoiceService.class);
                 PendingIntent pi = PendingIntent.getService(
@@ -145,7 +194,8 @@ public class VoiceService extends Service {
                 if (am != null) {
                     am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 1000, pi);
                 }
-            } catch (Exception ignored) { }
+            } catch (Throwable ignored) {
+            }
         }
         super.onTaskRemoved(rootIntent);
     }
@@ -159,16 +209,100 @@ public class VoiceService extends Service {
     public void onDestroy() {
         destroyed = true;
         running = false;
+        transitionTo(State.STOPPED);
+
         cancelWatchdog();
+        abandonAudioFocus();
         unregisterScreenReceiver();
         releaseWakeLock();
+
+        MacroRepository.getInstance(this).removeListener(this);
+        SettingsRepository.getInstance(this).removeListener(this);
+
         FloatService.refresh(this);
         h.removeCallbacksAndMessages(null);
         destroyRecognizer();
+
         super.onDestroy();
     }
 
-    // ------------------------------------------------------------- watchdog
+    // ------------------------------------------------------------- Finite State Machine (FSM)
+
+    public State getState() {
+        return state;
+    }
+
+    private synchronized boolean transitionTo(State newState) {
+        if (this.state == newState) return true;
+        Log.d(TAG, "FSM Transition: " + this.state + " -> " + newState);
+        this.state = newState;
+
+        // WakeLock Management tied strictly to FSM
+        if (newState == State.LISTENING || newState == State.PREPARING || newState == State.PROCESSING) {
+            acquireWakeLock();
+        } else {
+            releaseWakeLock();
+        }
+
+        // Notify State Listeners
+        String desc = getStateDescription(newState);
+        for (StateListener l : stateListeners) {
+            try {
+                l.onStateChanged(newState, desc);
+            } catch (Throwable ignored) {
+            }
+        }
+        return true;
+    }
+
+    private String getStateDescription(State s) {
+        switch (s) {
+            case LISTENING: return "Listening · Speak trigger";
+            case PROCESSING: return "Processing speech…";
+            case EXECUTING_MACRO: return "Running macro…";
+            case PREPARING: return "Preparing listener…";
+            case COOLDOWN: return "Cooling down…";
+            case BACKOFF_RECOVERY: return "Recovering audio…";
+            case STOPPED: default: return "Stopped";
+        }
+    }
+
+    // ------------------------------------------------------------- Reactive Data Updates
+
+    @Override
+    public void onMacrosChanged(List<Macro> macros) {
+        updateCachedMacros(macros);
+        if (state == State.LISTENING && cachedTriggers.isEmpty()) {
+            updateNotification("No shortcuts — add one with START");
+        }
+    }
+
+    @Override
+    public void onSettingChanged(String key) {
+        if (SettingsRepository.KEY_MASTER_ON.equals(key)) {
+            if (!SettingsRepository.getInstance(this).isMasterOn()) {
+                stopForeground(true);
+                stopSelf();
+            }
+        }
+    }
+
+    private void updateCachedMacros(List<Macro> macros) {
+        cachedMacros.clear();
+        cachedTriggers.clear();
+        cachedRawTriggers.clear();
+        if (macros != null) {
+            for (Macro m : macros) {
+                if (m != null && !m.trigger.isEmpty()) {
+                    cachedMacros.add(m);
+                    cachedTriggers.add(TriggerMatcher.norm(m.trigger));
+                    cachedRawTriggers.add(m.trigger);
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- Watchdog Timer
 
     private void resetWatchdog(long timeoutMs) {
         h.removeCallbacks(watchdogRunnable);
@@ -179,112 +313,39 @@ public class VoiceService extends Service {
         h.removeCallbacks(watchdogRunnable);
     }
 
-    // ------------------------------------------------------------- recognizer
+    // ------------------------------------------------------------- Recognizer Lifecycle
 
-    private void createRecognizer() {
+    private void recreateRecognizerSafely() {
         destroyRecognizer();
         try {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        } catch (Exception e) {
+            if (recognizer != null) {
+                recognizer.setRecognitionListener(recognitionListener);
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Error initializing SpeechRecognizer", t);
             recognizer = null;
         }
-        if (recognizer != null) {
-            try {
-                recognizer.setRecognitionListener(listener);
-            } catch (Exception e) {
-                recognizer = null;
-            }
-        }
-    }
-
-    private boolean modelChecked = false;
-
-    private static boolean hasEnglish(List<String> langs) {
-        if (langs == null) return false;
-        for (String l : langs) {
-            if (l != null && l.toLowerCase(java.util.Locale.ROOT).startsWith("en")) return true;
-        }
-        return false;
-    }
-
-    /** Android 13+: offline inglizcha ovoz paketi mavjudligini tekshiradi */
-    private void ensureOfflineModel() {
-        if (modelChecked || Build.VERSION.SDK_INT < 33 || recognizer == null) return;
-        modelChecked = true;
-        try {
-            final Intent probe = buildIntent();
-            recognizer.checkRecognitionSupport(probe, getMainExecutor(), new RecognitionSupportCallback() {
-                @Override public void onSupportResult(RecognitionSupport support) {
-                    if (hasEnglish(support.getInstalledOnDeviceLanguages())) return;
-                    if (hasEnglish(support.getSupportedOnDeviceLanguages())) {
-                        try {
-                            if (recognizer != null) recognizer.triggerModelDownload(probe);
-                            toast("Downloading offline English voice pack…");
-                        } catch (Exception ignored) { }
-                    }
-                }
-                @Override public void onError(int error) { }
-            });
-        } catch (Exception ignored) { }
     }
 
     private void destroyRecognizer() {
         cancelWatchdog();
         if (recognizer != null) {
-            try { recognizer.cancel(); } catch (Exception ignored) { }
-            try { recognizer.destroy(); } catch (Exception ignored) { }
+            try { recognizer.cancel(); } catch (Throwable ignored) {}
+            try { recognizer.destroy(); } catch (Throwable ignored) {}
             recognizer = null;
         }
     }
 
-    private Intent buildIntent() {
-        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        // Free-form qisqa buyruqlar va xilma-xil iboralar uchun eng yaxshi offline model
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
-        i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
-        i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
-        // Oflayn rejimni ustuvor qiladi (agar oflayn model bo'lsa darhol internetsiz ishlaydi)
-        i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
-
-        // Foydalanuvchi triggerlariga yo'naltirish (Android 13+)
-        if (Build.VERSION.SDK_INT >= 33 && !rawTriggers.isEmpty()) {
-            i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, new ArrayList<String>(rawTriggers));
-        }
-
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 700L);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 250L);
-        return i;
-    }
-
-    private void loadMacros() {
-        macros.clear();
-        triggers.clear();
-        rawTriggers.clear();
-        try {
-            JSONArray arr = new JSONArray(Store.getMacros(this));
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.optJSONObject(i);
-                if (o == null) continue;
-                macros.add(o);
-                triggers.add(TriggerMatcher.norm(o.optString("trigger", "")));
-                rawTriggers.add(o.optString("trigger", ""));
-            }
-        } catch (Exception ignored) { }
-    }
-
     private void scheduleListen(long delayMs) {
-        if (destroyed) return;
+        if (destroyed || callPaused) return;
         h.removeCallbacks(listenRunnable);
-        h.postDelayed(listenRunnable, delayMs);
+        h.postDelayed(listenRunnable, Math.max(20, delayMs));
     }
 
-    private void listen() {
-        if (destroyed || paused) return;
-        if (!Store.isEnabled(this)) {
+    private void startListeningInternal() {
+        if (destroyed || callPaused || state == State.EXECUTING_MACRO) return;
+        if (!SettingsRepository.getInstance(this).isMasterOn()) {
             stopForeground(true);
             stopSelf();
             return;
@@ -293,127 +354,217 @@ public class VoiceService extends Service {
             scheduleListen(600);
             return;
         }
-        loadMacros();
-        if (triggers.isEmpty()) {
+        if (cachedTriggers.isEmpty()) {
             updateNotification("No shortcuts — add one with START");
             scheduleListen(3000);
             return;
         }
-        if (recognizer == null) createRecognizer();
-        try {
-            acquireWakeLock();
-            if (recognizer == null) createRecognizer();
+
+        transitionTo(State.PREPARING);
+
+        if (recognizer == null) {
+            recreateRecognizerSafely();
             if (recognizer == null) {
-                scheduleListen(1500);
+                consecutiveErrors++;
+                transitionTo(State.BACKOFF_RECOVERY);
+                scheduleListen(1000);
                 return;
             }
+        }
+
+        try {
             ensureOfflineModel();
             resetWatchdog(WATCHDOG_MS);
             recognizer.startListening(buildIntent());
+            transitionTo(State.LISTENING);
             updateNotification("Listening · Speak your trigger");
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            Log.w(TAG, "startListening error", e);
             cancelWatchdog();
-            createRecognizer();
-            errorStreak++;
-            scheduleListen(500);
+            consecutiveErrors++;
+            transitionTo(State.BACKOFF_RECOVERY);
+            recreateRecognizerSafely();
+            long backoff = Math.min(200L * consecutiveErrors, 2000L);
+            scheduleListen(backoff);
         }
     }
 
-    private final RecognitionListener listener = new RecognitionListener() {
+    private Intent buildIntent() {
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
+        i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
+        i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+        i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+
+        if (Build.VERSION.SDK_INT >= 33 && !cachedRawTriggers.isEmpty()) {
+            i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, new ArrayList<>(cachedRawTriggers));
+        }
+
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 700L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 250L);
+        return i;
+    }
+
+    private void ensureOfflineModel() {
+        if (modelDownloadChecked || Build.VERSION.SDK_INT < 33 || recognizer == null) return;
+        modelDownloadChecked = true;
+        try {
+            final Intent probe = buildIntent();
+            recognizer.checkRecognitionSupport(probe, getMainExecutor(), new RecognitionSupportCallback() {
+                @Override
+                public void onSupportResult(RecognitionSupport support) {
+                    if (hasEnglish(support.getInstalledOnDeviceLanguages())) return;
+                    if (hasEnglish(support.getSupportedOnDeviceLanguages())) {
+                        try {
+                            if (recognizer != null) recognizer.triggerModelDownload(probe);
+                            toast("Downloading offline English voice pack…");
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+                @Override
+                public void onError(int error) {}
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean hasEnglish(List<String> langs) {
+        if (langs == null) return false;
+        for (String l : langs) {
+            if (l != null && l.toLowerCase(Locale.ROOT).startsWith("en")) return true;
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------- RecognitionListener
+
+    private final RecognitionListener recognitionListener = new RecognitionListener() {
         @Override
         public void onReadyForSpeech(Bundle params) {
-            updateNotification("Listening · Speak trigger");
+            if (state != State.EXECUTING_MACRO) {
+                transitionTo(State.LISTENING);
+                updateNotification("Listening · Speak trigger");
+            }
         }
 
         @Override
         public void onBeginningOfSpeech() {
-            resetWatchdog(10000);
-            updateNotification("Hearing speech…");
+            if (state != State.EXECUTING_MACRO) {
+                transitionTo(State.PROCESSING);
+                resetWatchdog(10000);
+                updateNotification("Hearing speech…");
+            }
         }
 
-        @Override public void onRmsChanged(float rmsdB) { }
-        @Override public void onBufferReceived(byte[] buffer) { }
-        @Override public void onEndOfSpeech() {
-            updateNotification("Processing speech…");
+        @Override public void onRmsChanged(float rmsdB) {}
+        @Override public void onBufferReceived(byte[] buffer) {}
+
+        @Override
+        public void onEndOfSpeech() {
+            if (state != State.EXECUTING_MACRO) {
+                transitionTo(State.PROCESSING);
+                updateNotification("Processing speech…");
+            }
         }
-        @Override public void onEvent(int eventType, Bundle params) { }
+
+        @Override public void onEvent(int eventType, Bundle params) {}
 
         @Override
         public void onPartialResults(Bundle partialResults) {
             resetWatchdog(8000);
-            if (partialResults != null) {
+            if (partialResults != null && state != State.EXECUTING_MACRO) {
                 ArrayList<String> heard = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (heard != null && !heard.isEmpty()) {
                     updateNotification("Hearing: \"" + heard.get(0) + "\"");
                 }
+                handleResults(partialResults, TriggerMatcher.EXACT, true);
             }
-            // Qisman natijada juda aniq mos kelsa darhol bajariladi
-            handleResults(partialResults, TriggerMatcher.EXACT, true);
         }
 
         @Override
         public void onResults(Bundle results) {
             cancelWatchdog();
-            errorStreak = 0;
-            if (results != null) {
+            consecutiveErrors = 0;
+            if (results != null && state != State.EXECUTING_MACRO) {
                 ArrayList<String> heard = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (heard != null && !heard.isEmpty()) {
                     String top = heard.get(0);
-                    int idx = TriggerMatcher.best(heard, triggers, TriggerMatcher.FUZZY);
-                    if (idx >= 0 && idx < macros.size()) {
-                        String matchedName = macros.get(idx).optString("trigger", top);
-                        updateNotification("Running: " + matchedName);
-                        fire(idx);
+                    int idx = TriggerMatcher.best(heard, cachedTriggers, TriggerMatcher.FUZZY);
+                    if (idx >= 0 && idx < cachedMacros.size()) {
+                        Macro matched = cachedMacros.get(idx);
+                        updateNotification("Running: " + matched.trigger);
+                        fireMacro(matched);
                         return;
                     } else {
                         updateNotification("Heard: \"" + top + "\" (no match)");
+                        transitionTo(State.COOLDOWN);
                         scheduleListen(400);
                         return;
                     }
                 }
             }
+            transitionTo(State.COOLDOWN);
             scheduleListen(100);
         }
 
         @Override
         public void onError(int error) {
             cancelWatchdog();
-            if (destroyed || paused) return;
+            if (destroyed || callPaused || state == State.EXECUTING_MACRO) return;
+
             long delay = 120;
             switch (error) {
                 case SpeechRecognizer.ERROR_NO_MATCH:
                 case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                    errorStreak = 0;
+                    consecutiveErrors = 0;
+                    transitionTo(State.COOLDOWN);
                     delay = 100;
                     break;
-                case SpeechRecognizer.ERROR_CLIENT:
-                    errorStreak++;
-                    if (errorStreak >= 2) createRecognizer();
-                    delay = 200;
-                    break;
+
                 case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
-                    createRecognizer();
-                    delay = 350;
+                    transitionTo(State.BACKOFF_RECOVERY);
+                    recreateRecognizerSafely();
+                    delay = GUARD_INTERVAL_MS;
                     break;
+
+                case SpeechRecognizer.ERROR_CLIENT:
+                    consecutiveErrors++;
+                    transitionTo(State.BACKOFF_RECOVERY);
+                    if (consecutiveErrors >= 2) recreateRecognizerSafely();
+                    delay = Math.min(150L * consecutiveErrors, 1200L);
+                    break;
+
                 case SpeechRecognizer.ERROR_AUDIO:
-                    createRecognizer();
-                    delay = 450;
+                    transitionTo(State.BACKOFF_RECOVERY);
+                    recreateRecognizerSafely();
+                    delay = 400;
                     break;
+
                 case 12: // ERROR_LANGUAGE_NOT_SUPPORTED
                 case 13: // ERROR_LANGUAGE_UNAVAILABLE
                     toast("Download offline English pack in Voice Settings");
-                    createRecognizer();
-                    delay = 800;
+                    transitionTo(State.BACKOFF_RECOVERY);
+                    recreateRecognizerSafely();
+                    delay = 1000;
                     break;
+
                 case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
                     toast("Microphone permission missing");
+                    transitionTo(State.STOPPED);
                     stopForeground(true);
                     stopSelf();
                     return;
+
                 default:
-                    errorStreak++;
-                    if (errorStreak >= 3) createRecognizer();
-                    delay = Math.min(200L * errorStreak, 2000L);
+                    consecutiveErrors++;
+                    transitionTo(State.BACKOFF_RECOVERY);
+                    if (consecutiveErrors >= 3) recreateRecognizerSafely();
+                    delay = Math.min(200L * consecutiveErrors, 2000L);
                     break;
             }
             scheduleListen(delay);
@@ -421,79 +572,147 @@ public class VoiceService extends Service {
     };
 
     private boolean handleResults(Bundle b, double threshold, boolean partial) {
-        if (b == null || destroyed || paused || FloatService.recording) return false;
+        if (b == null || destroyed || callPaused || state == State.EXECUTING_MACRO || FloatService.recording) {
+            return false;
+        }
         ArrayList<String> heard = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         if (heard == null || heard.isEmpty()) return false;
         if (System.currentTimeMillis() < cooldownUntil) return false;
-        int idx = TriggerMatcher.best(heard, triggers, threshold);
-        if (idx < 0 || idx >= macros.size()) return false;
-        // Qisman natijada uzunroq trigger bo'lishi mumkin bo'lsa, yakuniy natijani kutamiz
-        if (partial && TriggerMatcher.hasLongerSibling(triggers, idx)) return false;
-        fire(idx);
+
+        int idx = TriggerMatcher.best(heard, cachedTriggers, threshold);
+        if (idx < 0 || idx >= cachedMacros.size()) return false;
+
+        // Disambiguate longer sibling prefix before firing on partial match
+        if (partial && TriggerMatcher.hasLongerSibling(cachedTriggers, idx)) {
+            return false;
+        }
+
+        fireMacro(cachedMacros.get(idx));
         return true;
     }
 
-    // ------------------------------------------------------------- makro ishga tushirish
+    // ------------------------------------------------------------- Macro Execution
 
-    private void fire(int idx) {
-        if (paused || destroyed || idx < 0 || idx >= macros.size()) return;
-        JSONObject m = macros.get(idx);
-        if (m == null) return;
-        // Qulf ekranida yozilgan makro qulf ekranidan ijro etiladi; boshqalari qulf ochilishini kutadi
-        if (Setup.isLocked(this) && !m.optBoolean("locked", false)) {
+    private void fireMacro(Macro m) {
+        if (state == State.EXECUTING_MACRO || destroyed || m == null) return;
+
+        if (Setup.isLocked(this) && !m.locked) {
             queueUntilUnlock(m);
             return;
         }
-        runMacro(m);
+        executeMacro(m);
     }
 
-    /** Qulf ekranida aytilgan: qulf ochilgach Home'dan ishga tushadi. */
-    private void queueUntilUnlock(JSONObject m) {
-        queued = m;
-        queuedUntil = System.currentTimeMillis() + 45000;
+    private void queueUntilUnlock(Macro m) {
+        queuedMacro = m;
+        queuedMacroExpiry = System.currentTimeMillis() + 45000;
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
-        updateNotification("Unlock phone to run: " + m.optString("trigger", ""));
+        updateNotification("Unlock phone to run: " + m.trigger);
+        transitionTo(State.COOLDOWN);
+        scheduleListen(1000);
     }
 
-    private void runMacro(final JSONObject m) {
-        if (paused || destroyed || m == null) return;
-        final String name = m.optString("trigger", "");
+    private void executeMacro(final Macro m) {
+        if (state == State.EXECUTING_MACRO || destroyed || m == null) return;
+        final String name = m.trigger;
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
-        paused = true;
+
+        transitionTo(State.EXECUTING_MACRO);
         cancelWatchdog();
         h.removeCallbacks(listenRunnable);
-        try { if (recognizer != null) recognizer.cancel(); } catch (Exception ignored) { }
+
+        if (recognizer != null) {
+            try { recognizer.cancel(); } catch (Throwable ignored) {}
+        }
 
         updateNotification("Running: " + name);
-        int st = Runner.run(this, m, new GestureService.Done() {
+        int result = Runner.run(this, m, new GestureService.Done() {
             @Override
             public void onDone(boolean completed) {
                 updateNotification(completed ? "Done: " + name : "Stopped: " + name);
-                h.postDelayed(new Runnable() {
-                    @Override public void run() {
-                        paused = false;
-                        errorStreak = 0;
-                        listen();
-                    }
+                h.postDelayed(() -> {
+                    transitionTo(State.COOLDOWN);
+                    consecutiveErrors = 0;
+                    startListeningInternal();
                 }, 800);
             }
         });
-        if (st == Runner.NO_ACCESSIBILITY) {
+
+        if (result == Runner.NO_ACCESSIBILITY) {
             toast("Enable Accessibility first");
             updateNotification("Accessibility is off");
-            h.postDelayed(new Runnable() {
-                @Override public void run() {
-                    paused = false;
-                    listen();
-                }
+            h.postDelayed(() -> {
+                transitionTo(State.COOLDOWN);
+                startListeningInternal();
             }, 1500);
-        } else if (st == Runner.INVALID || st == Runner.LOCKED) {
-            paused = false;
-            scheduleListen(st == Runner.INVALID ? 400 : 1000);
+        } else if (result == Runner.INVALID || result == Runner.LOCKED) {
+            transitionTo(State.COOLDOWN);
+            scheduleListen(result == Runner.INVALID ? 400 : 1000);
         }
     }
 
-    // ------------------------------------------------------------- bildirishnoma
+    // ------------------------------------------------------------- Audio Focus Handling
+
+    private void setupAudioFocus() {
+        if (audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            AudioAttributes playbackAttributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener(this::onAudioFocusChanged)
+                    .build();
+            audioManager.requestAudioFocus(audioFocusRequest);
+        } else {
+            audioManager.requestAudioFocus(
+                    this::onAudioFocusChanged,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+        }
+    }
+
+    private void onAudioFocusChanged(int focusChange) {
+        if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+            focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+            // Incoming phone call or media takeover -> pause gracefully
+            callPaused = true;
+            cancelWatchdog();
+            if (recognizer != null) {
+                try { recognizer.cancel(); } catch (Throwable ignored) {}
+            }
+            transitionTo(State.COOLDOWN);
+            updateNotification("Microphone paused for call/audio");
+        } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+            if (callPaused) {
+                callPaused = false;
+                scheduleListen(500);
+            }
+        }
+    }
+
+    private void abandonAudioFocus() {
+        if (audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+        } else {
+            audioManager.abandonAudioFocus(this::onAudioFocusChanged);
+        }
+    }
+
+    // ------------------------------------------------------------- Notifications & Receivers
+
+    private void createNotificationChannel() {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null) {
+            NotificationChannel ch = new NotificationChannel(
+                    CHANNEL_ID, "SayDo listening", NotificationManager.IMPORTANCE_LOW);
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        }
+    }
 
     private Notification buildNotification(String text) {
         Intent open = new Intent(this, MainActivity.class)
@@ -508,7 +727,7 @@ public class VoiceService extends Service {
         Notification.Action stopAction = new Notification.Action.Builder(
                 Icon.createWithResource(this, R.drawable.ic_stat_close), "Stop", pStop).build();
 
-        return new Notification.Builder(this, CHANNEL)
+        return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_mic)
                 .setContentTitle("SayDo")
                 .setContentText(text)
@@ -527,53 +746,57 @@ public class VoiceService extends Service {
             if (nm != null) {
                 nm.notify(NOTIF_ID, buildNotification(text));
             }
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) {
+        }
     }
 
     private void registerScreenReceiver() {
-        if (screenRx != null) return;
-        screenRx = new BroadcastReceiver() {
-            @Override public void onReceive(Context context, Intent intent) {
+        if (screenReceiver != null) return;
+        screenReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
                 if (intent == null) return;
-                String act = intent.getAction();
-                if (Intent.ACTION_USER_PRESENT.equals(act)) {
-                    final JSONObject q = queued;
-                    boolean fresh = q != null && System.currentTimeMillis() < queuedUntil;
-                    queued = null;
-                    if (fresh && !destroyed) {
-                        h.postDelayed(new Runnable() {
-                            @Override public void run() { runMacro(q); }
-                        }, 500);
+                String action = intent.getAction();
+                if (Intent.ACTION_USER_PRESENT.equals(action)) {
+                    final Macro q = queuedMacro;
+                    boolean valid = q != null && System.currentTimeMillis() < queuedMacroExpiry;
+                    queuedMacro = null;
+                    if (valid && !destroyed) {
+                        h.postDelayed(() -> executeMacro(q), 500);
                     }
-                } else if (Intent.ACTION_SCREEN_OFF.equals(act)) {
+                } else if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                     acquireWakeLock();
-                    if (running && !paused && !destroyed) {
+                    if (running && state != State.EXECUTING_MACRO && !destroyed) {
                         scheduleListen(200);
                     }
-                } else if (Intent.ACTION_SCREEN_ON.equals(act)) {
+                } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                     acquireWakeLock();
-                    if (running && !paused && !destroyed) {
+                    if (running && state != State.EXECUTING_MACRO && !destroyed) {
                         scheduleListen(100);
                     }
                 }
             }
         };
+
         try {
             IntentFilter f = new IntentFilter();
             f.addAction(Intent.ACTION_USER_PRESENT);
             f.addAction(Intent.ACTION_SCREEN_OFF);
             f.addAction(Intent.ACTION_SCREEN_ON);
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenRx, f, Context.RECEIVER_NOT_EXPORTED);
-            else registerReceiver(screenRx, f);
-        } catch (Exception e) {
-            screenRx = null;
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(screenReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(screenReceiver, f);
+            }
+        } catch (Throwable t) {
+            screenReceiver = null;
         }
     }
 
     private void unregisterScreenReceiver() {
-        if (screenRx != null) {
-            try { unregisterReceiver(screenRx); } catch (Exception ignored) { }
-            screenRx = null;
+        if (screenReceiver != null) {
+            try { unregisterReceiver(screenReceiver); } catch (Throwable ignored) {}
+            screenReceiver = null;
         }
     }
 
@@ -582,25 +805,27 @@ public class VoiceService extends Service {
             if (wakeLock == null) {
                 PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
                 if (pm != null) {
-                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SayDo:listen");
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SayDo:VoiceListenLock");
                     wakeLock.setReferenceCounted(false);
                 }
             }
-            if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
-        } catch (Exception ignored) { }
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private void releaseWakeLock() {
         try {
-            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        } catch (Exception ignored) { }
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private void toast(final String msg) {
-        h.post(new Runnable() {
-            @Override public void run() {
-                Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
-            }
-        });
+        h.post(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show());
     }
 }
