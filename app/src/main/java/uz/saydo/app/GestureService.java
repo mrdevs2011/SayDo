@@ -40,12 +40,11 @@ public class GestureService extends AccessibilityService {
         void onDone(boolean completed);
     }
 
-    private static final long TAP_MS = 60;
+    private static final long TAP_MS = 30;
     private static final long MIN_HOLD_MS = 400;
-    private static final long MIN_SWIPE_MS = 40;
-    private static final long FIRST_DELAY_MS = 300;
-    private static final long MIN_GAP_MS = 30;
-    private static final float MIN_POINT_STEP_PX = 3f;
+    private static final long MIN_SWIPE_MS = 20;
+    private static final long FIRST_DELAY_MS = 120;
+    private static final long MIN_GAP_MS = 10;
 
     private static final class G {
         String type = "tap";
@@ -271,7 +270,7 @@ public class GestureService extends AccessibilityService {
                     // Tizim animatsiyasi tugashini kutamiz
                     handler.postDelayed(new Runnable() {
                         @Override public void run() { step(list, i + 1, tok, okGlobal ? failures : failures + 1); }
-                    }, 500);
+                    }, 350);
                     return;
                 }
                 GestureDescription gd;
@@ -301,6 +300,12 @@ public class GestureService extends AccessibilityService {
 
     // ---------------------------------------------------------------- gest qurish
 
+    /**
+     * Vaqtga proporsional resample qilingan path bilan gest quradi.
+     * Android StrokeDescription path segmentlariga vaqtni TENG taqsimlaydi,
+     * shuning uchun biz path nuqtalarini vaqtga proporsional qayta taqsimlaymiz —
+     * shunda sekin harakatda ko'p nuqta, tez harakatda kam nuqta bo'ladi.
+     */
     private GestureDescription build(G g) {
         int[] size = screenSize();
         int w = size[0], h = size[1];
@@ -310,29 +315,41 @@ public class GestureService extends AccessibilityService {
         long dur;
 
         if ("swipe".equals(g.type) && g.pts.size() > 1) {
-            float lx = 0, ly = 0;
-            boolean first = true;
             int n = g.pts.size();
-            for (int i = 0; i < n; i++) {
-                double[] p = g.pts.get(i);
-                float x = clamp((float) (p[0] * w), w);
-                float y = clamp((float) (p[1] * h), h);
-                if (first) {
-                    path.moveTo(x, y);
-                    lx = x;
-                    ly = y;
-                    first = false;
-                    continue;
-                }
-                boolean last = (i == n - 1);
-                if (last || Math.hypot(x - lx, y - ly) >= MIN_POINT_STEP_PX) {
-                    path.lineTo(x, y);
-                    lx = x;
-                    ly = y;
-                }
-            }
             dur = (long) (g.pts.get(n - 1)[2] - g.pts.get(0)[2]);
             if (dur < MIN_SWIPE_MS) dur = MIN_SWIPE_MS;
+            if (dur > maxDur) dur = maxDur;
+
+            // Vaqtga proporsional resample: N ta teng oraliqli nuqtaga qayta taqsimlash
+            int segments = Math.min(n, 200);
+            if (segments < 2) segments = 2;
+            double totalTime = g.pts.get(n - 1)[2] - g.pts.get(0)[2];
+            if (totalTime <= 0) totalTime = 1;
+            double t0 = g.pts.get(0)[2];
+
+            boolean first = true;
+            int srcIdx = 0;
+            for (int si = 0; si < segments; si++) {
+                // Har bir segment uchun maqsad vaqtni hisoblash
+                double targetT = t0 + (totalTime * si / (segments - 1));
+                // Tegishli asl nuqtani topish (linear interpolation)
+                while (srcIdx < n - 2 && g.pts.get(srcIdx + 1)[2] <= targetT) srcIdx++;
+                double[] p1 = g.pts.get(srcIdx);
+                double[] p2 = g.pts.get(Math.min(srcIdx + 1, n - 1));
+                double segT = p2[2] - p1[2];
+                double frac = (segT > 0) ? (targetT - p1[2]) / segT : 0;
+                frac = Math.max(0, Math.min(1, frac));
+
+                float px = clamp((float) ((p1[0] + (p2[0] - p1[0]) * frac) * w), w);
+                float py = clamp((float) ((p1[1] + (p2[1] - p1[1]) * frac) * h), h);
+
+                if (first) {
+                    path.moveTo(px, py);
+                    first = false;
+                } else {
+                    path.lineTo(px, py);
+                }
+            }
         } else {
             float x = clamp((float) (g.x * w), w);
             float y = clamp((float) (g.y * h), h);
