@@ -62,7 +62,7 @@ public class FloatService extends Service {
     /** Devor tomonga shuncha (tugma o'lchamining ulushi) itarilsa, yarmi devorga kirib ketadi. */
     private static final float DOCK_PUSH_FRACTION = 0.30f;
     private static final int MAX_GESTURES = 200;
-    private static final int MAX_PATH_POINTS = 500;
+    private static final int MAX_PATH_POINTS = 2000;
 
     private final Handler h = new Handler(Looper.getMainLooper());
     private WindowManager wm;
@@ -117,17 +117,6 @@ public class FloatService extends Service {
         if (ACTION_HIDE.equals(action)) {
             stopRecording(false);
             removeBubble();
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-
-        if (!Net.isOnline(this)) {
-            // Internet yo'q: float ham chiqmaydi
-            stopRecording(false);
-            hideTriggerPanel();
-            removeBubble();
-            showing = false;
-            recording = false;
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -371,10 +360,6 @@ public class FloatService extends Service {
             stopRecording(true);
             return;
         }
-        if (!Net.isOnline(this)) {
-            hide(this);
-            return;
-        }
         if (!Store.isEnabled(this)) {
             toast("Turn ON first");
             return;
@@ -407,10 +392,6 @@ public class FloatService extends Service {
         String t = trigger == null ? "" : trigger.trim();
         if (t.isEmpty()) return;
         if (t.length() > 60) t = t.substring(0, 60);
-        if (!Net.isOnline(this)) {
-            hide(this);
-            return;
-        }
         if (isTriggerTaken(t)) {
             toast("Already used: \"" + t + "\"");
             return;
@@ -631,7 +612,8 @@ public class FloatService extends Service {
         if (recordView == null || recordLp == null) return;
         if (touchable) recordLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         else recordLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-        try { wm.updateViewLayout(recordView, recordLp); } catch (Exception ignored) { }
+        WindowManager w = recordWm != null ? recordWm : wm;
+        try { w.updateViewLayout(recordView, recordLp); } catch (Exception ignored) { }
     }
 
     private void passThrough(JSONObject stroke) {
@@ -645,7 +627,7 @@ public class FloatService extends Service {
                     @Override public void run() {
                         if (tok == passToken) setRecordTouchable(true);
                     }
-                }, 30);
+                }, 10);
             }
         });
         if (!ok) {
@@ -653,7 +635,7 @@ public class FloatService extends Service {
             return;
         }
         // Xavfsizlik: callback kelmasa ham qatlam qayta tegiladigan bo'ladi
-        long guard = Math.max(stroke.optLong("dur", 60), 60) + 1200;
+        long guard = Math.max(stroke.optLong("dur", 60), 60) + 500;
         h.postDelayed(new Runnable() {
             @Override public void run() {
                 if (tok == passToken) setRecordTouchable(true);
@@ -707,13 +689,14 @@ public class FloatService extends Service {
 
         @Override
         public boolean onTouchEvent(MotionEvent e) {
-            // Bubble hududiga tegsa — o'tkazib yubormaymiz, lekin bubble o'zi yuqorida
+            // Haqiqiy ekran o'lchamlarini olish (replay bilan mos)
+            int sw = screenW();
+            int sh = screenH();
+
             float x = e.getRawX();
             float y = e.getRawY();
-            int w = getWidth() > 0 ? getWidth() : getResources().getDisplayMetrics().widthPixels;
-            int h = getHeight() > 0 ? getHeight() : getResources().getDisplayMetrics().heightPixels;
-            double nx = clamp01(x / (double) w);
-            double ny = clamp01(y / (double) h);
+            double nx = clamp01(x / (double) sw);
+            double ny = clamp01(y / (double) sh);
             long tRel = SystemClock.uptimeMillis() - recStartElapsed;
 
             switch (e.getActionMasked()) {
@@ -741,6 +724,29 @@ public class FloatService extends Service {
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     if (!fingerDown) return true;
+                    // Barcha tarixiy nuqtalarni yozib olish (batched touch events)
+                    int histCount = e.getHistorySize();
+                    // stroke boshlangan uptimeMillis (absolute)
+                    long strokeStartAbs = recStartElapsed + strokeStartElapsed;
+                    for (int hi = 0; hi < histCount; hi++) {
+                        float hx = e.getHistoricalX(hi);
+                        float hy = e.getHistoricalY(hi);
+                        // Raw koordinatalarni hisoblash (offset tuzatish)
+                        float hrx = hx + (e.getRawX() - e.getX());
+                        float hry = hy + (e.getRawY() - e.getY());
+                        livePath.lineTo(hrx, hry);
+                        if (curPath != null && curPath.length() < MAX_PATH_POINTS) {
+                            long htAbs = e.getHistoricalEventTime(hi);
+                            long strokeT = Math.max(0, htAbs - strokeStartAbs);
+                            try {
+                                JSONObject p = new JSONObject();
+                                p.put("x", clamp01(hrx / (double) sw));
+                                p.put("y", clamp01(hry / (double) sh));
+                                p.put("t", strokeT);
+                                curPath.put(p);
+                            } catch (Exception ignored) { }
+                        }
+                    }
                     lastX = x;
                     lastY = y;
                     livePath.lineTo(x, y);

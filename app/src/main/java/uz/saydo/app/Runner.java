@@ -18,7 +18,6 @@ final class Runner {
     static final int NO_ACCESSIBILITY = 1;
     static final int INVALID = 2;
     static final int LOCKED = 3;
-    static final int OFFLINE = 4;
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile int runToken = 0;
@@ -31,7 +30,6 @@ final class Runner {
         if (!macro.has("gestures")) return INVALID;
         GestureService g = GestureService.instance;
         if (g == null) return NO_ACCESSIBILITY;
-        if (!Net.isOnline(ctx)) return OFFLINE;
 
         final Context app = ctx.getApplicationContext();
         final boolean macroLocked = macro.optBoolean("locked", false);

@@ -17,6 +17,8 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.speech.RecognitionListener;
+import android.speech.RecognitionSupport;
+import android.speech.RecognitionSupportCallback;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.os.PowerManager;
@@ -94,20 +96,14 @@ public class VoiceService extends Service {
             return START_NOT_STICKY;
         }
 
-        if (!Net.isOnline(this)) {
-            toast("No internet connection");
-            running = false;
-            stopForeground(true);
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-
         running = true;
         destroyed = false;
         acquireWakeLock();
         FloatService.refresh(this);
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        boolean canRecognize = SpeechRecognizer.isRecognitionAvailable(this)
+                || (Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this));
+        if (!canRecognize) {
             toast("Speech recognition not available on this device");
             stopSelf();
             return START_NOT_STICKY;
@@ -140,11 +136,49 @@ public class VoiceService extends Service {
     private void createRecognizer() {
         destroyRecognizer();
         try {
-            recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            if (Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+                // Telefonning o'zidagi (internetsiz) tanish
+                recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this);
+            } else {
+                recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            }
             if (recognizer != null) recognizer.setRecognitionListener(listener);
         } catch (Exception e) {
             recognizer = null;
         }
+    }
+
+    private boolean modelChecked = false;
+
+    private static boolean hasEnglish(List<String> langs) {
+        if (langs == null) return false;
+        for (String l : langs) {
+            if (l != null && l.toLowerCase(java.util.Locale.ROOT).startsWith("en")) return true;
+        }
+        return false;
+    }
+
+    /** Android 13+: offline inglizcha ovoz paketi o'rnatilganini tekshiradi, yo'q bo'lsa yuklashni boshlaydi. */
+    private void ensureOfflineModel() {
+        if (modelChecked || Build.VERSION.SDK_INT < 33 || recognizer == null) return;
+        modelChecked = true;
+        try {
+            final Intent probe = buildIntent();
+            recognizer.checkRecognitionSupport(probe, getMainExecutor(), new RecognitionSupportCallback() {
+                @Override public void onSupportResult(RecognitionSupport support) {
+                    if (hasEnglish(support.getInstalledOnDeviceLanguages())) return;
+                    if (hasEnglish(support.getSupportedOnDeviceLanguages())) {
+                        try {
+                            if (recognizer != null) recognizer.triggerModelDownload(probe);
+                            toast("Downloading offline English voice pack (one time)…");
+                        } catch (Exception ignored) { }
+                    } else {
+                        toast("Offline English speech is not available on this phone");
+                    }
+                }
+                @Override public void onError(int error) { }
+            });
+        } catch (Exception ignored) { }
     }
 
     private void destroyRecognizer() {
@@ -165,8 +199,8 @@ public class VoiceService extends Service {
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
-        // Internet shart, shuning uchun eng aniq (online) tanishdan foydalanamiz
-        i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
+        // Doim offline: internet kerak emas
+        i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
         i.putExtra("android.speech.extra.MASK_OFFENSIVE_WORDS", false);
         // Foydalanuvchi triggerlariga yo'naltirish (Android 13+)
         if (Build.VERSION.SDK_INT >= 33 && !rawTriggers.isEmpty()) {
@@ -211,12 +245,6 @@ public class VoiceService extends Service {
             scheduleListen(800);
             return;
         }
-        if (!Net.isOnline(this)) {
-            running = false;
-            stopForeground(true);
-            stopSelf();
-            return;
-        }
         loadMacros();
         if (triggers.isEmpty()) {
             updateNotification("No shortcuts — add one in the app");
@@ -231,6 +259,7 @@ public class VoiceService extends Service {
                 scheduleListen(2000);
                 return;
             }
+            ensureOfflineModel();
             recognizer.startListening(buildIntent());
             updateNotification("Listening · " + langLabel());
         } catch (Exception e) {
@@ -280,14 +309,14 @@ public class VoiceService extends Service {
                 case SpeechRecognizer.ERROR_NETWORK:
                 case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
                 case SpeechRecognizer.ERROR_SERVER:
-                    if (!Net.isOnline(VoiceService.this)) {
-                        running = false;
-                        stopForeground(true);
-                        stopSelf();
-                        return;
-                    }
                     errorStreak++;
                     delay = Math.min(1000L * errorStreak, 8000L);
+                    break;
+                case 12: // ERROR_LANGUAGE_NOT_SUPPORTED
+                case 13: // ERROR_LANGUAGE_UNAVAILABLE
+                    modelChecked = false;
+                    toast("Offline English voice pack is missing. Download it in phone Settings > Voice input");
+                    delay = 8000;
                     break;
                 case SpeechRecognizer.ERROR_CLIENT:
                     delay = 400;
@@ -404,7 +433,7 @@ public class VoiceService extends Service {
                     listen();
                 }
             }, 2000);
-        } else if (st == Runner.INVALID || st == Runner.LOCKED || st == Runner.OFFLINE) {
+        } else if (st == Runner.INVALID || st == Runner.LOCKED) {
             paused = false;
             scheduleListen(st == Runner.INVALID ? 500 : 1500);
         }

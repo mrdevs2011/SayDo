@@ -82,40 +82,4 @@
         android:textSize="20sp"
         android:textStyle="bold" />
 
-    <LinearLayout
-        android:id="@+id/offline"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/bg_deep"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="32dp"
-        android:visibility="gone">
-
-        <ImageView
-            android:layout_width="140dp"
-            android:layout_height="140dp"
-            android:contentDescription="Offline"
-            android:src="@drawable/ic_wifi_off" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="You're offline"
-            android:textColor="@color/text_primary"
-            android:textSize="28sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:text="Connect to Wi-Fi or mobile data to use SayDo"
-            android:textColor="@color/text_secondary"
-            android:textSize="15sp" />
-    </LinearLayout>
 </FrameLayout>
