@@ -1,0 +1,171 @@
+package uz.saydo.app.data;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+
+/**
+ * Immutable domain representation of a recorded or simulated screen interaction.
+ */
+public final class Gesture implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    public static final String TYPE_TAP = "tap";
+    public static final String TYPE_HOLD = "hold";
+    public static final String TYPE_SWIPE = "swipe";
+    public static final String TYPE_GLOBAL = "global";
+
+    public final String type;
+    public final String action;
+    public final double x;
+    public final double y;
+    public final long startTime;
+    public final long endTime;
+    public final long duration;
+    public final List<TouchPoint> points;
+
+    public Gesture(String type, String action, double x, double y,
+                   long startTime, long endTime, long duration, List<TouchPoint> points) {
+        this.type = (type != null && !type.trim().isEmpty()) ? type.trim().toLowerCase() : TYPE_TAP;
+        this.action = (action != null) ? action.trim().toLowerCase() : "";
+        if (Double.isNaN(x) || Double.isInfinite(x)) x = 0.5;
+        if (Double.isNaN(y) || Double.isInfinite(y)) y = 0.5;
+        this.x = clamp(x, 0.0, 1.0);
+        this.y = clamp(y, 0.0, 1.0);
+        this.startTime = Math.max(0, startTime);
+        this.endTime = Math.max(this.startTime, endTime);
+        long calcDur = this.endTime - this.startTime;
+        this.duration = (duration > 0) ? duration : Math.max(1, calcDur);
+
+        if (points == null || points.isEmpty()) {
+            this.points = Collections.emptyList();
+        } else {
+            List<TouchPoint> copy = new ArrayList<>(points.size());
+            for (TouchPoint pt : points) {
+                if (pt != null) copy.add(pt);
+            }
+            this.points = Collections.unmodifiableList(copy);
+        }
+    }
+
+    private static double clamp(double val, double min, double max) {
+        if (val < min) return min;
+        if (val > max) return max;
+        return val;
+    }
+
+    public static Gesture createTap(double x, double y, long startTime, long endTime) {
+        List<TouchPoint> pts = new ArrayList<>(1);
+        pts.add(new TouchPoint(x, y, startTime));
+        return new Gesture(TYPE_TAP, "", x, y, startTime, Math.max(startTime + 20, endTime), 20, pts);
+    }
+
+    public static Gesture createHold(double x, double y, long startTime, long endTime) {
+        List<TouchPoint> pts = new ArrayList<>(1);
+        pts.add(new TouchPoint(x, y, startTime));
+        long dur = Math.max(380, endTime - startTime);
+        return new Gesture(TYPE_HOLD, "", x, y, startTime, startTime + dur, dur, pts);
+    }
+
+    public static Gesture createSwipe(List<TouchPoint> points, long startTime, long endTime) {
+        double startX = (points != null && !points.isEmpty()) ? points.get(0).x : 0.5;
+        double startY = (points != null && !points.isEmpty()) ? points.get(0).y : 0.5;
+        long dur = Math.max(20, endTime - startTime);
+        return new Gesture(TYPE_SWIPE, "", startX, startY, startTime, endTime, dur, points);
+    }
+
+    public static Gesture createGlobal(String action, long startTime) {
+        return new Gesture(TYPE_GLOBAL, action, 0.5, 0.5, startTime, startTime + 100, 100, Collections.emptyList());
+    }
+
+    public JSONObject toJson() {
+        JSONObject obj = new JSONObject();
+        try {
+            obj.put("type", type);
+            if (!action.isEmpty()) {
+                obj.put("action", action);
+            }
+            obj.put("x", Math.round(x * 100000.0) / 100000.0);
+            obj.put("y", Math.round(y * 100000.0) / 100000.0);
+            obj.put("st", startTime);
+            obj.put("et", endTime);
+            obj.put("dur", duration);
+
+            if (points != null && !points.isEmpty()) {
+                JSONArray arr = new JSONArray();
+                for (TouchPoint p : points) {
+                    arr.put(p.toJson());
+                }
+                obj.put("path", arr);
+            }
+        } catch (JSONException ignored) {
+        }
+        return obj;
+    }
+
+    public static Gesture fromJson(JSONObject obj) {
+        if (obj == null) {
+            return createTap(0.5, 0.5, 0, 20);
+        }
+        String type = obj.optString("type", TYPE_TAP);
+        String action = obj.optString("action", "");
+        double x = obj.optDouble("x", 0.5);
+        double y = obj.optDouble("y", 0.5);
+        long st = obj.optLong("st", 0);
+        long et = obj.optLong("et", st);
+        long dur = obj.optLong("dur", Math.max(0, et - st));
+
+        List<TouchPoint> pointsList = new ArrayList<>();
+        JSONArray pathArr = obj.optJSONArray("path");
+        if (pathArr != null) {
+            for (int i = 0; i < pathArr.length(); i++) {
+                JSONObject pObj = pathArr.optJSONObject(i);
+                if (pObj != null) {
+                    pointsList.add(TouchPoint.fromJson(pObj));
+                }
+            }
+        }
+
+        return new Gesture(type, action, x, y, st, et, dur, pointsList);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Gesture)) return false;
+        Gesture gesture = (Gesture) o;
+        return Double.compare(gesture.x, x) == 0 &&
+               Double.compare(gesture.y, y) == 0 &&
+               startTime == gesture.startTime &&
+               endTime == gesture.endTime &&
+               duration == gesture.duration &&
+               Objects.equals(type, gesture.type) &&
+               Objects.equals(action, gesture.action) &&
+               Objects.equals(points, gesture.points);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(type, action, x, y, startTime, endTime, duration, points);
+    }
+
+    @Override
+    public String toString() {
+        return "Gesture{" +
+                "type='" + type + '\'' +
+                ", action='" + action + '\'' +
+                ", x=" + x +
+                ", y=" + y +
+                ", startTime=" + startTime +
+                ", endTime=" + endTime +
+                ", duration=" + duration +
+                ", points=" + points.size() +
+                '}';
+    }
+}
