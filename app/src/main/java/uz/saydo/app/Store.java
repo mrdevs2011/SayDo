@@ -10,6 +10,7 @@ final class Store {
     private static final String K_LANG = "lang";
     private static final String K_ENABLED = "master_on";
     private static final String K_BATT = "batt_asked";
+    private static final String K_VOICE = "voice_guided";
     private static final int MAX_MACROS_JSON = 512 * 1024;
 
     private static final String LANG = "en-US";
@@ -61,6 +62,16 @@ final class Store {
 
     static void setBatteryAsked(Context c) {
         try { sp(c).edit().putBoolean(K_BATT, true).commit(); }
+        catch (Exception ignored) { }
+    }
+
+    static boolean voiceSetupGuided(Context c) {
+        try { return sp(c).getBoolean(K_VOICE, false); }
+        catch (Exception e) { return true; }
+    }
+
+    static void setVoiceSetupGuided(Context c, boolean guided) {
+        try { sp(c).edit().putBoolean(K_VOICE, guided).commit(); }
         catch (Exception ignored) { }
     }
 }

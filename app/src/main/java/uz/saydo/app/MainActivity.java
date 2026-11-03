@@ -24,28 +24,29 @@ import org.json.JSONObject;
 
 /**
  * Toza bosh ekran: sarlavha, shortcutlar ro'yxati va bitta katta START/STOP tugmasi.
- * START bosilganda to'liq sozlanmagan bo'lsa kerakli sozlamaga o'tkazadi.
- * Hammasi internetsiz (offline) ishlaydi.
+ * START (Auto Start) bosilganda barcha kerakli permissionlar, accessibility, overlay,
+ * battery optimization va oflayn ovoz sozlamalarini ketma-ket aniqlaydi va avtomatik yoqadi.
+ * Ilovada hech qanday alohida Settings sahifasi yoki tugmasi yo'q.
  */
 public class MainActivity extends AppCompatActivity implements MacroAdapter.Listener {
 
     static volatile MainActivity current;
     static final String EXTRA_ASK_MIC = "ask_mic";
+    static final String EXTRA_ASK_NOTIF = "ask_notif";
 
     private static final int REQ_AUDIO = 101;
     private static final int REQ_NOTIF = 102;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean destroyed = false;
-    private boolean askedNotif = false;
 
-    /** START bosilgan va sozlash zanjiri davom etmoqda. */
+    /** START bosilgan va ketma-ket sozlash zanjiri davom etmoqda. */
     private boolean pendingStart = false;
     private int lastStep = -1;
 
     private RecyclerView list;
     private View empty;
-    private TextView hint, btnStart, btnVoiceSettings;
+    private TextView hint, btnStart;
     private MacroAdapter adapter;
     private JSONArray macros = new JSONArray();
 
@@ -67,7 +68,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         empty = findViewById(R.id.empty);
         hint = findViewById(R.id.hint);
         btnStart = findViewById(R.id.btnStart);
-        btnVoiceSettings = findViewById(R.id.btnVoiceSettings);
 
         adapter = new MacroAdapter(this);
         list.setLayoutManager(new LinearLayoutManager(this));
@@ -75,7 +75,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         list.setHasFixedSize(true);
 
         btnStart.setOnClickListener(v -> onStartClicked());
-        btnVoiceSettings.setOnClickListener(v -> Setup.openVoiceSettings(this));
 
         reloadMacros();
         refreshUi();
@@ -90,10 +89,17 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     private void handleIntent(Intent i) {
-        if (i != null && i.getBooleanExtra(EXTRA_ASK_MIC, false)) {
+        if (i == null) return;
+        if (i.getBooleanExtra(EXTRA_ASK_MIC, false)) {
             i.removeExtra(EXTRA_ASK_MIC);
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 requestMic();
+            }
+        }
+        if (i.getBooleanExtra(EXTRA_ASK_NOTIF, false)) {
+            i.removeExtra(EXTRA_ASK_NOTIF);
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestNotif();
             }
         }
     }
@@ -117,12 +123,13 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     private void onResume2() {
         if (destroyed) return;
         if (pendingStart) {
+            // Sozlamadan qaytildi: keyingi yetishmayotgan ruxsatni tekshirib davom etadi
             continueStart();
             return;
         }
         if (!Store.isEnabled(this)) return;
         if (Setup.missing(this) != Setup.OK) {
-            // Ruxsat qaytarib olingan: qaytadan START bilan sozlanadi
+            // Ruxsat qaytarib olingan: master o'chiriladi
             Store.setEnabled(this, false);
             FloatService.hide(this);
             stopListening();
@@ -179,18 +186,21 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         btnStart.setBackgroundResource(enabled ? R.drawable.bg_btn_stop : R.drawable.bg_btn_start);
 
         if (enabled && listening) {
-            hint.setText("Listening · English");
+            hint.setText("Listening · English (offline)");
             hint.setTextColor(ContextCompat.getColor(this, R.color.success));
         } else if (enabled) {
             hint.setText("Starting…");
             hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        } else if (pendingStart) {
+            hint.setText("Setting up permissions…");
+            hint.setTextColor(ContextCompat.getColor(this, R.color.accent));
         } else {
             hint.setText("Tap START to begin");
             hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         }
     }
 
-    // ------------------------------------------------------------------ start / stop
+    // ------------------------------------------------------------------ auto start chain
 
     private void onStartClicked() {
         if (Store.isEnabled(this)) {
@@ -202,7 +212,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         continueStart();
     }
 
-    /** Sozlash zanjiri: yetishmayotgan birinchi qadamni ochadi; hammasi tayyor bo'lsa ishga tushiradi. */
+    /**
+     * Auto Start zanjiri: faqat hali ruxsat berilmagan yoki sozlanmagan parametrlarni aniqlab,
+     * ketma-ket sozlatadi. Hammasi tayyor bo'lgach SayDo avtomatik ravishda to'liq ishga tushadi.
+     */
     private void continueStart() {
         if (!pendingStart || destroyed) return;
         int step = Setup.missing(this);
@@ -210,26 +223,47 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             pendingStart = false;
             lastStep = -1;
             applyMaster(true);
+            toast("SayDo is active! Tap floating START anytime");
             return;
         }
         if (step == lastStep) {
-            // Foydalanuvchi shu qadamni bajarmasdan qaytdi
+            // Foydalanuvchi ushbu sozlamani yoqmasdan qaytdi (bekor qildi)
             pendingStart = false;
             lastStep = -1;
-            toast(stepName(step) + " is required");
+            toast(stepName(step) + " is required to start SayDo");
             refreshUi();
             return;
         }
         lastStep = step;
-        if (step == Setup.NEED_MIC) requestMic();
-        else Setup.route(this, step);
+        switch (step) {
+            case Setup.NEED_MIC:
+                requestMic();
+                break;
+            case Setup.NEED_NOTIF:
+                requestNotif();
+                break;
+            case Setup.NEED_BATTERY:
+                Store.setBatteryAsked(this);
+                Setup.route(this, step);
+                break;
+            case Setup.NEED_VOICE_PACK:
+                Store.setVoiceSetupGuided(this, true);
+                Setup.route(this, step);
+                break;
+            default:
+                Setup.route(this, step);
+                break;
+        }
     }
 
     private String stepName(int step) {
         switch (step) {
             case Setup.NEED_OVERLAY: return "Display over other apps";
-            case Setup.NEED_ACCESSIBILITY: return "Accessibility";
-            case Setup.NEED_MIC: return "Microphone";
+            case Setup.NEED_ACCESSIBILITY: return "Accessibility service";
+            case Setup.NEED_MIC: return "Microphone permission";
+            case Setup.NEED_NOTIF: return "Notification permission";
+            case Setup.NEED_BATTERY: return "Battery optimization exemption";
+            case Setup.NEED_VOICE_PACK: return "Offline voice setup";
             default: return "Setup";
         }
     }
@@ -240,7 +274,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         if (on) {
             FloatService.show(this);
             startListeningFlow();
-            maybeRequestBatteryOpt();
         } else {
             FloatService.hide(this);
             stopListening();
@@ -248,23 +281,16 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         refreshUi();
     }
 
-    private void maybeRequestBatteryOpt() {
-        if (Build.VERSION.SDK_INT < 23 || Store.batteryAsked(this)) return;
-        try {
-            String pkg = getPackageName();
-            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
-                Store.setBatteryAsked(this);
-                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:" + pkg)));
-            }
-        } catch (Exception ignored) { }
-    }
-
-    // ------------------------------------------------------------------ voice
+    // ------------------------------------------------------------------ permissions & listening
 
     private void requestMic() {
         requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
+    }
+
+    private void requestNotif() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
+        }
     }
 
     private void startListeningFlow() {
@@ -273,10 +299,9 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             requestMic();
             return;
         }
-        if (Build.VERSION.SDK_INT >= 33 && !askedNotif
+        if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            askedNotif = true;
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
+            requestNotif();
             return;
         }
         try {
@@ -305,10 +330,14 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             } else if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 startListeningFlow();
             } else {
-                toast("Microphone permission required");
+                toast("Microphone permission is required");
             }
         } else if (code == REQ_NOTIF) {
-            startListeningFlow();
+            if (pendingStart) {
+                continueStart();
+            } else {
+                startListeningFlow();
+            }
         }
     }
 
