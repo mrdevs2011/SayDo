@@ -9,45 +9,77 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
-/** Shortcutlar ro'yxati. */
+import uz.saydo.app.data.Macro;
+
+/**
+ * High-performance, zero-crash RecyclerView adapter for voice macros.
+ * Operates on strongly-typed immutable Macro domain models and ID-based actions.
+ */
 final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
 
     interface Listener {
-        void onPlay(int index);
-        void onDelete(int index);
+        void onPlay(Macro macro);
+        void onDelete(String macroId);
     }
 
-    private JSONArray data = new JSONArray();
+    private final List<Macro> items = new ArrayList<>();
     private final Listener listener;
-    private int armedDelete = -1;
+    private String armedDeleteId = null;
 
     MacroAdapter(Listener listener) {
         this.listener = listener;
+        setHasStableIds(true);
     }
 
-    void setData(JSONArray arr) {
-        data = arr != null ? arr : new JSONArray();
-        armedDelete = -1;
+    void setData(List<Macro> newItems) {
+        items.clear();
+        if (newItems != null) {
+            items.addAll(newItems);
+        }
+        armedDeleteId = null;
         notifyDataSetChanged();
     }
 
-    void armDelete(int index) {
-        int prev = armedDelete;
-        armedDelete = index;
-        if (prev >= 0) notifyItemChanged(prev);
-        if (index >= 0) notifyItemChanged(index);
+    void armDelete(String macroId) {
+        String prev = armedDeleteId;
+        armedDeleteId = macroId;
+        if (prev != null) {
+            int prevIdx = indexOf(prev);
+            if (prevIdx >= 0) notifyItemChanged(prevIdx);
+        }
+        if (macroId != null) {
+            int newIdx = indexOf(macroId);
+            if (newIdx >= 0) notifyItemChanged(newIdx);
+        }
     }
 
-    int getArmedDelete() {
-        return armedDelete;
+    String getArmedDeleteId() {
+        return armedDeleteId;
+    }
+
+    private int indexOf(String macroId) {
+        if (macroId == null) return -1;
+        for (int i = 0; i < items.size(); i++) {
+            if (macroId.equals(items.get(i).id)) return i;
+        }
+        return -1;
+    }
+
+    @Override
+    public long getItemId(int position) {
+        if (position >= 0 && position < items.size()) {
+            return items.get(position).id.hashCode();
+        }
+        return RecyclerView.NO_ID;
     }
 
     @Override
     public int getItemCount() {
-        return data.length();
+        return items.size();
     }
 
     @NonNull
@@ -59,30 +91,34 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
 
     @Override
     public void onBindViewHolder(@NonNull VH h, int position) {
-        JSONObject m = data.optJSONObject(position);
-        if (m == null) return;
-        String trigger = m.optString("trigger", "?");
-        JSONArray g = m.optJSONArray("gestures");
-        int n = g != null ? g.length() : 0;
-        double secs = m.optLong("dur", 0) / 1000.0;
-        h.title.setText(trigger);
-        h.meta.setText(n + " actions · " + String.format(java.util.Locale.US, "%.1f", secs) + "s"
-                + (m.optBoolean("locked", false) ? " · from lock screen" : ""));
+        if (position < 0 || position >= items.size()) return;
+        final Macro m = items.get(position);
 
-        final int pos = position;
+        h.title.setText(m.trigger);
+        int actions = m.getGestureCount();
+        double secs = m.duration / 1000.0;
+        String metaText = actions + " actions · " + String.format(Locale.US, "%.1f", secs) + "s"
+                + (m.locked ? " · from lock screen" : "");
+        h.meta.setText(metaText);
+
+        final boolean isArmed = m.id.equals(armedDeleteId);
+        h.btnDel.setAlpha(isArmed ? 1.0f : 0.85f);
+        h.btnDel.setScaleX(isArmed ? 1.15f : 1.0f);
+        h.btnDel.setScaleY(isArmed ? 1.15f : 1.0f);
+
         h.btnPlay.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (listener != null) listener.onPlay(pos);
+            @Override
+            public void onClick(View v) {
+                if (listener != null) listener.onPlay(m);
             }
         });
+
         h.btnDel.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (listener != null) listener.onDelete(pos);
+            @Override
+            public void onClick(View v) {
+                if (listener != null) listener.onDelete(m.id);
             }
         });
-        h.btnDel.setAlpha(armedDelete == position ? 1f : 0.85f);
-        h.btnDel.setScaleX(armedDelete == position ? 1.08f : 1f);
-        h.btnDel.setScaleY(armedDelete == position ? 1.08f : 1f);
     }
 
     static final class VH extends RecyclerView.ViewHolder {

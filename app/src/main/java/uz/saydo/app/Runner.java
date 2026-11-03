@@ -7,6 +7,8 @@ import android.os.PowerManager;
 
 import org.json.JSONObject;
 
+import uz.saydo.app.data.Macro;
+
 /**
  * Makroni haqiqiy qurilmada ishga tushirish.
  * - Oddiy makro: avval Home'ga o'tadi, launcher chiqqach gestlarni bajaradi.
@@ -24,6 +26,11 @@ final class Runner {
     private static GestureService.Done pendingDone;
 
     private Runner() {}
+
+    static int run(Context ctx, final Macro macro, final GestureService.Done done) {
+        if (macro == null) return INVALID;
+        return run(ctx, macro.toJson(), done);
+    }
 
     static int run(Context ctx, final JSONObject macro, final GestureService.Done done) {
         if (ctx == null || macro == null) return INVALID;

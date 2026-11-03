@@ -3,12 +3,10 @@ package uz.saydo.app;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -16,21 +14,28 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
+import java.util.List;
+
+import uz.saydo.app.data.Macro;
+import uz.saydo.app.data.MacroRepository;
+import uz.saydo.app.data.SettingsRepository;
 
 /**
- * Toza bosh ekran: sarlavha, shortcutlar ro'yxati va bitta katta START/STOP tugmasi.
- * START (Auto Start) bosilganda barcha kerakli permissionlar, accessibility, overlay,
- * battery optimization va oflayn ovoz sozlamalarini ketma-ket aniqlaydi va avtomatik yoqadi.
- * Ilovada hech qanday alohida Settings sahifasi yoki tugmasi yo'q.
+ * Production-hardened, zero-polling reactive Main Activity.
+ * Subscribes directly to MacroRepository and SettingsRepository events.
+ * Eliminates polling runnables, static context leaks, and index race conditions.
  */
-public class MainActivity extends AppCompatActivity implements MacroAdapter.Listener {
+public class MainActivity extends AppCompatActivity implements
+        MacroAdapter.Listener,
+        MacroRepository.OnMacrosChangedListener,
+        SettingsRepository.Listener {
 
-    static volatile MainActivity current;
     static final String EXTRA_ASK_MIC = "ask_mic";
     static final String EXTRA_ASK_NOTIF = "ask_notif";
 
@@ -40,7 +45,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean destroyed = false;
 
-    /** START bosilgan va ketma-ket sozlash zanjiri davom etmoqda. */
+    /** Active step in Auto Start permission chain */
     private boolean pendingStart = false;
     private int lastStep = -1;
 
@@ -48,21 +53,24 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     private View empty;
     private TextView hint, btnStart;
     private MacroAdapter adapter;
-    private JSONArray macros = new JSONArray();
-
-    private final Runnable poll = new Runnable() {
-        @Override public void run() {
-            if (destroyed) return;
-            refreshUi();
-            ui.postDelayed(this, 1200);
-        }
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         destroyed = false;
         setContentView(R.layout.activity_main);
+
+        // Window Insets Handling for modern edge-to-edge displays
+        View root = findViewById(R.id.root);
+        if (root != null) {
+            ViewCompat.setOnApplyWindowInsetsListener(root, (v, windowInsets) -> {
+                Insets insets = windowInsets.getInsets(
+                        WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
+                );
+                v.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+                return WindowInsetsCompat.CONSUMED;
+            });
+        }
 
         list = findViewById(R.id.list);
         empty = findViewById(R.id.empty);
@@ -76,7 +84,11 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
         btnStart.setOnClickListener(v -> onStartClicked());
 
-        reloadMacros();
+        // Reactive subscriptions (Push updates instead of pull/polling)
+        MacroRepository.getInstance(this).addListener(this);
+        SettingsRepository.getInstance(this).addListener(this);
+
+        updateMacroList(MacroRepository.getInstance(this).getAll());
         refreshUi();
         handleIntent(getIntent());
     }
@@ -105,57 +117,31 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     @Override
-    protected void onStart() {
-        super.onStart();
-        current = this;
-    }
-
-    @Override
     protected void onResume() {
         super.onResume();
-        onResume2();
-        reloadMacros();
-        refreshUi();
-        ui.removeCallbacks(poll);
-        ui.postDelayed(poll, 1200);
-    }
-
-    private void onResume2() {
         if (destroyed) return;
         if (pendingStart) {
-            // Sozlamadan qaytildi: keyingi yetishmayotgan ruxsatni tekshirib davom etadi
             continueStart();
             return;
         }
-        if (!Store.isEnabled(this)) return;
+        if (!SettingsRepository.getInstance(this).isMasterOn()) return;
         if (Setup.missing(this) != Setup.OK) {
-            // Ruxsat qaytarib olingan: master o'chiriladi
-            Store.setEnabled(this, false);
+            SettingsRepository.getInstance(this).setMasterOn(false);
             FloatService.hide(this);
             stopListening();
             return;
         }
         FloatService.show(this);
         if (!VoiceService.running) startListeningFlow();
-    }
-
-    @Override
-    protected void onPause() {
-        ui.removeCallbacks(poll);
-        super.onPause();
-    }
-
-    @Override
-    protected void onStop() {
-        if (current == this) current = null;
-        super.onStop();
+        refreshUi();
     }
 
     @Override
     protected void onDestroy() {
         destroyed = true;
+        MacroRepository.getInstance(this).removeListener(this);
+        SettingsRepository.getInstance(this).removeListener(this);
         ui.removeCallbacksAndMessages(null);
-        if (current == this) current = null;
         super.onDestroy();
     }
 
@@ -164,23 +150,31 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         moveTaskToBack(true);
     }
 
-    // ------------------------------------------------------------------ data
+    // ------------------------------------------------------------------ Reactive Callbacks
 
-    private void reloadMacros() {
-        try {
-            macros = new JSONArray(Store.getMacros(this));
-        } catch (Exception e) {
-            macros = new JSONArray();
-        }
-        adapter.setData(macros);
-        boolean has = macros.length() > 0;
-        list.setVisibility(has ? View.VISIBLE : View.GONE);
-        empty.setVisibility(has ? View.GONE : View.VISIBLE);
+    @Override
+    public void onMacrosChanged(List<Macro> macros) {
+        if (destroyed) return;
+        updateMacroList(macros);
     }
 
-    private void refreshUi() {
+    @Override
+    public void onSettingChanged(String key) {
         if (destroyed) return;
-        boolean enabled = Store.isEnabled(this);
+        ui.post(this::refreshUi);
+    }
+
+    private void updateMacroList(List<Macro> macros) {
+        if (destroyed || macros == null) return;
+        adapter.setData(macros);
+        boolean hasItems = !macros.isEmpty();
+        list.setVisibility(hasItems ? View.VISIBLE : View.GONE);
+        empty.setVisibility(hasItems ? View.GONE : View.VISIBLE);
+    }
+
+    public void refreshUi() {
+        if (destroyed) return;
+        boolean enabled = SettingsRepository.getInstance(this).isMasterOn();
         boolean listening = VoiceService.running;
         btnStart.setText(enabled ? "STOP" : "START");
         btnStart.setBackgroundResource(enabled ? R.drawable.bg_btn_stop : R.drawable.bg_btn_start);
@@ -200,10 +194,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         }
     }
 
-    // ------------------------------------------------------------------ auto start chain
+    // ------------------------------------------------------------------ Auto Start Chain
 
     private void onStartClicked() {
-        if (Store.isEnabled(this)) {
+        if (SettingsRepository.getInstance(this).isMasterOn()) {
             applyMaster(false);
             return;
         }
@@ -212,10 +206,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         continueStart();
     }
 
-    /**
-     * Auto Start zanjiri: faqat hali ruxsat berilmagan yoki sozlanmagan parametrlarni aniqlab,
-     * ketma-ket sozlatadi. Hammasi tayyor bo'lgach SayDo avtomatik ravishda to'liq ishga tushadi.
-     */
     private void continueStart() {
         if (!pendingStart || destroyed) return;
         int step = Setup.missing(this);
@@ -227,7 +217,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             return;
         }
         if (step == lastStep) {
-            // Foydalanuvchi ushbu sozlamani yoqmasdan qaytdi (bekor qildi)
             pendingStart = false;
             lastStep = -1;
             toast(stepName(step) + " is required to start SayDo");
@@ -243,11 +232,11 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
                 requestNotif();
                 break;
             case Setup.NEED_BATTERY:
-                Store.setBatteryAsked(this);
+                SettingsRepository.getInstance(this).setBatteryAsked(true);
                 Setup.route(this, step);
                 break;
             case Setup.NEED_VOICE_PACK:
-                Store.setVoiceSetupGuided(this, true);
+                SettingsRepository.getInstance(this).setVoiceGuided(true);
                 Setup.route(this, step);
                 break;
             default:
@@ -270,7 +259,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     private void applyMaster(boolean on) {
         if (destroyed) return;
-        Store.setEnabled(this, on);
+        SettingsRepository.getInstance(this).setMasterOn(on);
         if (on) {
             FloatService.show(this);
             startListeningFlow();
@@ -281,7 +270,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         refreshUi();
     }
 
-    // ------------------------------------------------------------------ permissions & listening
+    // ------------------------------------------------------------------ Permissions & Audio
 
     private void requestMic() {
         requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
@@ -294,7 +283,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     private void startListeningFlow() {
-        if (destroyed || !Store.isEnabled(this)) return;
+        if (destroyed || !SettingsRepository.getInstance(this).isMasterOn()) return;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestMic();
             return;
@@ -315,7 +304,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     private void stopListening() {
-        try { stopService(new Intent(this, VoiceService.class)); } catch (Exception ignored) { }
+        try {
+            stopService(new Intent(this, VoiceService.class));
+        } catch (Exception ignored) {
+        }
         VoiceService.running = false;
         refreshUi();
     }
@@ -341,13 +333,13 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         }
     }
 
-    // ------------------------------------------------------------------ list actions
+    // ------------------------------------------------------------------ Macro Actions
 
     @Override
-    public void onPlay(int index) {
+    public void onPlay(Macro macro) {
+        if (macro == null) return;
         try {
-            JSONObject m = macros.optJSONObject(index);
-            int r = Runner.run(this, m, null);
+            int r = Runner.run(this, macro, null);
             if (r == Runner.NO_ACCESSIBILITY) Setup.route(this, Setup.NEED_ACCESSIBILITY);
             else if (r == Runner.INVALID) toast("Invalid shortcut");
             else if (r == Runner.LOCKED) toast("Unlock your phone first");
@@ -357,32 +349,32 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     @Override
-    public void onDelete(int index) {
-        if (adapter.getArmedDelete() != index) {
-            adapter.armDelete(index);
+    public void onDelete(String macroId) {
+        if (macroId == null) return;
+        String armed = adapter.getArmedDeleteId();
+        if (!macroId.equals(armed)) {
+            adapter.armDelete(macroId);
             toast("Tap again to delete");
             ui.postDelayed(() -> {
-                if (!destroyed && adapter.getArmedDelete() == index) adapter.armDelete(-1);
-            }, 2200);
+                if (!destroyed && macroId.equals(adapter.getArmedDeleteId())) {
+                    adapter.armDelete(null);
+                }
+            }, 2500);
             return;
         }
-        try {
-            JSONArray next = new JSONArray();
-            for (int i = 0; i < macros.length(); i++) {
-                if (i != index) next.put(macros.get(i));
-            }
-            Store.saveMacros(this, next.toString());
-            reloadMacros();
+
+        // Armed confirmation matched -> Delete by UUID
+        adapter.armDelete(null);
+        boolean deleted = MacroRepository.getInstance(this).delete(macroId);
+        if (deleted) {
             toast("Deleted");
-        } catch (Exception e) {
+        } else {
             toast("Could not delete");
         }
     }
 
-    // ------------------------------------------------------------------ helpers
-
-    private void toast(String m) {
-        if (destroyed || m == null) return;
-        Toast.makeText(this, m, Toast.LENGTH_SHORT).show();
+    private void toast(String message) {
+        if (destroyed || message == null) return;
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 }
