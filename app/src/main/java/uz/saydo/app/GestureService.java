@@ -49,6 +49,7 @@ public class GestureService extends AccessibilityService {
 
     private static final class G {
         String type = "tap";
+        String action = "";
         double x, y;
         long st, et, dur;
         List<double[]> pts = new ArrayList<double[]>(); // {x, y, t}
@@ -192,6 +193,30 @@ public class GestureService extends AccessibilityService {
         return true;
     }
 
+    /**
+     * Yozish paytida: foydalanuvchining bitta gestini (tap/hold/swipe) kechiktirmasdan
+     * tagidagi ilovaga yuboradi, shunda yozish vaqtida ilovalar odatdagidek ishlaydi.
+     * @param after gest tugagach (yoki bekor bo'lganda) chaqiriladi
+     * @return false bo'lsa — yuborib bo'lmadi, after chaqirilmaydi
+     */
+    boolean injectNow(JSONObject stroke, final Runnable after) {
+        try {
+            JSONObject wrap = new JSONObject();
+            JSONArray one = new JSONArray();
+            one.put(stroke);
+            wrap.put("gestures", one);
+            List<G> list = parse(wrap);
+            if (list.isEmpty() || "global".equals(list.get(0).type)) return false;
+            GestureDescription gd = build(list.get(0));
+            return dispatchGesture(gd, new GestureResultCallback() {
+                @Override public void onCompleted(GestureDescription d) { if (after != null) after.run(); }
+                @Override public void onCancelled(GestureDescription d) { if (after != null) after.run(); }
+            }, null);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void finish(int tok, boolean ok) {
         if (tok != token) return;
         running = false;
@@ -213,6 +238,17 @@ public class GestureService extends AccessibilityService {
             @Override
             public void run() {
                 if (tok != token) return;
+                if ("global".equals(g.type)) {
+                    int act = "home".equals(g.action) ? GLOBAL_ACTION_HOME
+                            : "recents".equals(g.action) ? GLOBAL_ACTION_RECENTS
+                            : GLOBAL_ACTION_BACK;
+                    final boolean okGlobal = performGlobalAction(act);
+                    // Tizim animatsiyasi tugashini kutamiz
+                    handler.postDelayed(new Runnable() {
+                        @Override public void run() { step(list, i + 1, tok, okGlobal ? failures : failures + 1); }
+                    }, 500);
+                    return;
+                }
                 GestureDescription gd;
                 try {
                     gd = build(g);
@@ -320,6 +356,7 @@ public class GestureService extends AccessibilityService {
             if (o == null) continue;
             G g = new G();
             g.type = o.optString("type", "tap");
+            g.action = o.optString("action", "");
             g.x = o.optDouble("x", 0.5);
             g.y = o.optDouble("y", 0.5);
             g.st = o.optLong("st", 0);
