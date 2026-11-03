@@ -32,6 +32,9 @@ public class TriggerMatcherTest {
         assertEquals(TriggerMatcher.norm("go to settings"), TriggerMatcher.norm("go two settings"));
         assertEquals(TriggerMatcher.norm("call one"), TriggerMatcher.norm("call 1"));
         assertEquals(TriggerMatcher.norm("for you"), TriggerMatcher.norm("four you"));
+        assertEquals(TriggerMatcher.norm("turn on wifi"), TriggerMatcher.norm("turn on wi fi"));
+        assertEquals(TriggerMatcher.norm("open youtube"), TriggerMatcher.norm("open yt"));
+        assertEquals(TriggerMatcher.norm("open app"), TriggerMatcher.norm("open application"));
     }
 
     @Test public void norm_dropsFillerWords() {

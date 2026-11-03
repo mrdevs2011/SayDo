@@ -1,5 +1,6 @@
 package uz.saydo.app;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -11,17 +12,19 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.speech.RecognitionListener;
 import android.speech.RecognitionSupport;
 import android.speech.RecognitionSupportCallback;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
-import android.os.PowerManager;
 import android.widget.Toast;
 
 import org.json.JSONArray;
@@ -31,15 +34,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Foreground (mikrofon) servis: ovozni doimiy tinglaydi, trigger so'z aytilsa
- * mos makroni GestureService orqali bajaradi.
+ * Foreground (mikrofon) servis: ovozni 100% offline va fonda doimiy tinglaydi,
+ * trigger so'z aytilsa mos makroni GestureService orqali bajaradi.
  */
 public class VoiceService extends Service {
 
     static final String ACTION_STOP = "uz.saydo.app.STOP";
     private static final String CHANNEL = "vf_listen";
     private static final int NOTIF_ID = 17;
-    private static final long COOLDOWN_MS = 4000;
+    private static final long COOLDOWN_MS = 3000;
+    private static final long WATCHDOG_MS = 10000;
 
     /** Servis hozir ishlayaptimi — UI shu bayroqni o'qiydi. */
     static volatile boolean running = false;
@@ -47,6 +51,12 @@ public class VoiceService extends Service {
     private final Handler h = new Handler(Looper.getMainLooper());
     private PowerManager.WakeLock wakeLock;
     private SpeechRecognizer recognizer;
+    private AudioManager audioManager;
+    private boolean forceStandardRecognizer = false;
+    private boolean volumeMuted = false;
+    private int originalSysVol = -1;
+    private int originalNotifVol = -1;
+
     private boolean destroyed = false;
     private boolean paused = false;      // makro bajarilayotganda tinglamaymiz
     private long cooldownUntil = 0;
@@ -59,20 +69,35 @@ public class VoiceService extends Service {
     // Telefon qulfda bo'lganda aytilgan trigger: qulf ochilgach Home'dan ishga tushadi
     private JSONObject queued;
     private long queuedUntil;
-    private BroadcastReceiver unlockRx;
+    private BroadcastReceiver screenRx;
 
     private final Runnable listenRunnable = new Runnable() {
         @Override public void run() { listen(); }
     };
 
+    private final Runnable watchdogRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (destroyed || paused) return;
+            // Recognizer hech qanday callback bermay qotib qolsa, qayta tiklaymiz
+            destroyRecognizer();
+            createRecognizer();
+            scheduleListen(100);
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
+        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         NotificationManager nm = getSystemService(NotificationManager.class);
-        NotificationChannel ch = new NotificationChannel(
-                CHANNEL, "SayDo listening", NotificationManager.IMPORTANCE_LOW);
-        ch.setShowBadge(false);
-        nm.createNotificationChannel(ch);
+        if (nm != null) {
+            NotificationChannel ch = new NotificationChannel(
+                    CHANNEL, "SayDo listening", NotificationManager.IMPORTANCE_LOW);
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        }
+        registerScreenReceiver();
     }
 
     @Override
@@ -84,7 +109,7 @@ public class VoiceService extends Service {
         }
 
         try {
-            Notification n = buildNotification("Starting…");
+            Notification n = buildNotification("Listening · English (offline)");
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             } else {
@@ -115,6 +140,24 @@ public class VoiceService extends Service {
     }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // App recent apps'dan o'chirilganda ham servis tirik qolishi kerak
+        if (Store.isEnabled(this)) {
+            try {
+                Intent restart = new Intent(getApplicationContext(), VoiceService.class);
+                PendingIntent pi = PendingIntent.getService(
+                        getApplicationContext(), 99, restart,
+                        PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+                AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+                if (am != null) {
+                    am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 1000, pi);
+                }
+            } catch (Exception ignored) { }
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public IBinder onBind(Intent intent) {
         return null;
     }
@@ -123,7 +166,9 @@ public class VoiceService extends Service {
     public void onDestroy() {
         destroyed = true;
         running = false;
-        unregisterUnlock();
+        cancelWatchdog();
+        restoreAudioVolume();
+        unregisterScreenReceiver();
         releaseWakeLock();
         FloatService.refresh(this);
         h.removeCallbacksAndMessages(null);
@@ -131,20 +176,68 @@ public class VoiceService extends Service {
         super.onDestroy();
     }
 
+    // ------------------------------------------------------------- audio beep muting
+
+    private void muteBeep() {
+        if (audioManager == null || volumeMuted) return;
+        try {
+            if (!audioManager.isMusicActive()) {
+                originalSysVol = audioManager.getStreamVolume(AudioManager.STREAM_SYSTEM);
+                originalNotifVol = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION);
+                audioManager.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0);
+                audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0);
+                volumeMuted = true;
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private void restoreAudioVolume() {
+        if (!volumeMuted || audioManager == null) return;
+        volumeMuted = false;
+        try {
+            if (originalSysVol >= 0) audioManager.setStreamVolume(AudioManager.STREAM_SYSTEM, originalSysVol, 0);
+            if (originalNotifVol >= 0) audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalNotifVol, 0);
+        } catch (Exception ignored) { }
+        originalSysVol = -1;
+        originalNotifVol = -1;
+    }
+
+    // ------------------------------------------------------------- watchdog
+
+    private void resetWatchdog(long timeoutMs) {
+        h.removeCallbacks(watchdogRunnable);
+        h.postDelayed(watchdogRunnable, timeoutMs);
+    }
+
+    private void cancelWatchdog() {
+        h.removeCallbacks(watchdogRunnable);
+    }
+
     // ------------------------------------------------------------- recognizer
 
     private void createRecognizer() {
         destroyRecognizer();
         try {
-            if (Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
-                // Telefonning o'zidagi (internetsiz) tanish
+            if (!forceStandardRecognizer && Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+                // Qurilmaning o'zidagi (100% internetsiz) on-device motor
                 recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this);
-            } else {
-                recognizer = SpeechRecognizer.createSpeechRecognizer(this);
             }
-            if (recognizer != null) recognizer.setRecognitionListener(listener);
         } catch (Exception e) {
             recognizer = null;
+        }
+        if (recognizer == null) {
+            try {
+                recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            } catch (Exception e) {
+                recognizer = null;
+            }
+        }
+        if (recognizer != null) {
+            try {
+                recognizer.setRecognitionListener(listener);
+            } catch (Exception e) {
+                recognizer = null;
+            }
         }
     }
 
@@ -158,7 +251,7 @@ public class VoiceService extends Service {
         return false;
     }
 
-    /** Android 13+: offline inglizcha ovoz paketi o'rnatilganini tekshiradi, yo'q bo'lsa yuklashni boshlaydi. */
+    /** Android 13+: offline inglizcha ovoz paketi mavjudligini tekshiradi */
     private void ensureOfflineModel() {
         if (modelChecked || Build.VERSION.SDK_INT < 33 || recognizer == null) return;
         modelChecked = true;
@@ -170,10 +263,8 @@ public class VoiceService extends Service {
                     if (hasEnglish(support.getSupportedOnDeviceLanguages())) {
                         try {
                             if (recognizer != null) recognizer.triggerModelDownload(probe);
-                            toast("Downloading offline English voice pack (one time)…");
+                            toast("Downloading offline English voice pack…");
                         } catch (Exception ignored) { }
-                    } else {
-                        toast("Offline English speech is not available on this phone");
                     }
                 }
                 @Override public void onError(int error) { }
@@ -182,6 +273,8 @@ public class VoiceService extends Service {
     }
 
     private void destroyRecognizer() {
+        cancelWatchdog();
+        restoreAudioVolume();
         if (recognizer != null) {
             try { recognizer.cancel(); } catch (Exception ignored) { }
             try { recognizer.destroy(); } catch (Exception ignored) { }
@@ -191,24 +284,27 @@ public class VoiceService extends Service {
 
     private Intent buildIntent() {
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        // Qisqa buyruqlar uchun eng mos model; til har doim inglizcha (en-US)
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH);
+        // Free-form qisqa buyruqlar va xilma-xil iboralar uchun eng yaxshi offline model
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
-        i.putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true);
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
-        // Doim offline: internet kerak emas
+        // 100% Offline rejim: internetga bormasin
         i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        i.putExtra("android.speech.extra.PREFER_OFFLINE", true);
+        i.putExtra("android.speech.extra.DICTATION_MODE", true);
         i.putExtra("android.speech.extra.MASK_OFFENSIVE_WORDS", false);
+
         // Foydalanuvchi triggerlariga yo'naltirish (Android 13+)
         if (Build.VERSION.SDK_INT >= 33 && !rawTriggers.isEmpty()) {
             i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, new ArrayList<String>(rawTriggers));
         }
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 400);
+
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L);
         return i;
     }
 
@@ -242,12 +338,12 @@ public class VoiceService extends Service {
             return;
         }
         if (FloatService.recording) {
-            scheduleListen(800);
+            scheduleListen(600);
             return;
         }
         loadMacros();
         if (triggers.isEmpty()) {
-            updateNotification("No shortcuts — add one in the app");
+            updateNotification("No shortcuts — add one with START");
             scheduleListen(3000);
             return;
         }
@@ -256,27 +352,34 @@ public class VoiceService extends Service {
             acquireWakeLock();
             if (recognizer == null) createRecognizer();
             if (recognizer == null) {
-                scheduleListen(2000);
+                scheduleListen(1500);
                 return;
             }
             ensureOfflineModel();
+            muteBeep();
+            resetWatchdog(WATCHDOG_MS);
             recognizer.startListening(buildIntent());
-            updateNotification("Listening · " + langLabel());
+            updateNotification("Listening · English (offline)");
         } catch (Exception e) {
+            restoreAudioVolume();
+            cancelWatchdog();
             createRecognizer();
             errorStreak++;
-            scheduleListen(1000);
+            scheduleListen(600);
         }
     }
 
-    private String langLabel() {
-        String l = Store.getLang(this);
-        return l.length() >= 2 ? l.substring(0, 2).toUpperCase() : l;
-    }
-
     private final RecognitionListener listener = new RecognitionListener() {
-        @Override public void onReadyForSpeech(Bundle params) { }
-        @Override public void onBeginningOfSpeech() { }
+        @Override
+        public void onReadyForSpeech(Bundle params) {
+            restoreAudioVolume();
+        }
+
+        @Override
+        public void onBeginningOfSpeech() {
+            resetWatchdog(8000);
+        }
+
         @Override public void onRmsChanged(float rmsdB) { }
         @Override public void onBufferReceived(byte[] buffer) { }
         @Override public void onEndOfSpeech() { }
@@ -284,46 +387,55 @@ public class VoiceService extends Service {
 
         @Override
         public void onPartialResults(Bundle partialResults) {
-            // Qisman natijada faqat juda aniq moslikda darhol ishga tushiramiz.
+            resetWatchdog(6000);
+            // Qisman natijada juda aniq mos kelsa darhol bajariladi
             handleResults(partialResults, TriggerMatcher.EXACT, true);
         }
 
         @Override
         public void onResults(Bundle results) {
+            cancelWatchdog();
+            restoreAudioVolume();
             errorStreak = 0;
             if (!handleResults(results, TriggerMatcher.FUZZY, false)) {
-                scheduleListen(200);
+                scheduleListen(100);
+            } else if (!paused) {
+                // Agar qulf ochilishini kutayotgan bo'lsa, tinglashni to'xtatmaymiz
+                scheduleListen(600);
             }
         }
 
         @Override
         public void onError(int error) {
+            cancelWatchdog();
+            restoreAudioVolume();
             if (destroyed || paused) return;
-            long delay;
+            long delay = 150;
             switch (error) {
                 case SpeechRecognizer.ERROR_NO_MATCH:
                 case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
                     errorStreak = 0;
-                    delay = 200;
-                    break;
-                case SpeechRecognizer.ERROR_NETWORK:
-                case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
-                case SpeechRecognizer.ERROR_SERVER:
-                    errorStreak++;
-                    delay = Math.min(1000L * errorStreak, 8000L);
-                    break;
-                case 12: // ERROR_LANGUAGE_NOT_SUPPORTED
-                case 13: // ERROR_LANGUAGE_UNAVAILABLE
-                    modelChecked = false;
-                    toast("Offline English voice pack is missing. Download it in phone Settings > Voice input");
-                    delay = 8000;
+                    delay = 100;
                     break;
                 case SpeechRecognizer.ERROR_CLIENT:
-                    delay = 400;
+                    errorStreak++;
+                    if (errorStreak >= 2) createRecognizer();
+                    delay = 250;
                     break;
                 case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
                     createRecognizer();
-                    delay = 1000;
+                    delay = 400;
+                    break;
+                case SpeechRecognizer.ERROR_AUDIO:
+                    createRecognizer();
+                    delay = 500;
+                    break;
+                case 12: // ERROR_LANGUAGE_NOT_SUPPORTED
+                case 13: // ERROR_LANGUAGE_UNAVAILABLE
+                    // On-device API ushbu qurilmada mavjud bo'lmasa, standart motorga o'tamiz
+                    forceStandardRecognizer = true;
+                    createRecognizer();
+                    delay = 800;
                     break;
                 case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
                     toast("Microphone permission missing");
@@ -332,8 +444,8 @@ public class VoiceService extends Service {
                     return;
                 default:
                     errorStreak++;
-                    delay = Math.min(500L << Math.min(errorStreak, 4), 8000L);
-                    if (errorStreak >= 3) createRecognizer();
+                    if (errorStreak >= 2) createRecognizer();
+                    delay = Math.min(250L * errorStreak, 2500L);
                     break;
             }
             scheduleListen(delay);
@@ -367,39 +479,12 @@ public class VoiceService extends Service {
         runMacro(m);
     }
 
-    /** Qulf ekranida aytilgan: qulf ochilgach (45 soniya ichida) Home'dan ishga tushadi. */
+    /** Qulf ekranida aytilgan: qulf ochilgach Home'dan ishga tushadi. */
     private void queueUntilUnlock(JSONObject m) {
         queued = m;
         queuedUntil = System.currentTimeMillis() + 45000;
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
-        updateNotification("Unlock your phone to run: " + m.optString("trigger", ""));
-        if (unlockRx != null) return;
-        unlockRx = new BroadcastReceiver() {
-            @Override public void onReceive(Context context, Intent intent) {
-                final JSONObject q = queued;
-                boolean fresh = q != null && System.currentTimeMillis() < queuedUntil;
-                queued = null;
-                unregisterUnlock();
-                if (!fresh || destroyed) return;
-                h.postDelayed(new Runnable() {
-                    @Override public void run() { runMacro(q); }
-                }, 700);
-            }
-        };
-        try {
-            IntentFilter f = new IntentFilter(Intent.ACTION_USER_PRESENT);
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(unlockRx, f, Context.RECEIVER_NOT_EXPORTED);
-            else registerReceiver(unlockRx, f);
-        } catch (Exception e) {
-            unlockRx = null;
-        }
-    }
-
-    private void unregisterUnlock() {
-        if (unlockRx != null) {
-            try { unregisterReceiver(unlockRx); } catch (Exception ignored) { }
-            unlockRx = null;
-        }
+        updateNotification("Unlock phone to run: " + m.optString("trigger", ""));
     }
 
     private void runMacro(final JSONObject m) {
@@ -407,6 +492,8 @@ public class VoiceService extends Service {
         final String name = m.optString("trigger", "");
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
         paused = true;
+        cancelWatchdog();
+        restoreAudioVolume();
         h.removeCallbacks(listenRunnable);
         try { if (recognizer != null) recognizer.cancel(); } catch (Exception ignored) { }
 
@@ -421,7 +508,7 @@ public class VoiceService extends Service {
                         errorStreak = 0;
                         listen();
                     }
-                }, 1200);
+                }, 800);
             }
         });
         if (st == Runner.NO_ACCESSIBILITY) {
@@ -432,10 +519,10 @@ public class VoiceService extends Service {
                     paused = false;
                     listen();
                 }
-            }, 2000);
+            }, 1500);
         } else if (st == Runner.INVALID || st == Runner.LOCKED) {
             paused = false;
-            scheduleListen(st == Runner.INVALID ? 500 : 1500);
+            scheduleListen(st == Runner.INVALID ? 400 : 1000);
         }
     }
 
@@ -469,19 +556,71 @@ public class VoiceService extends Service {
     private void updateNotification(String text) {
         if (destroyed) return;
         try {
-            getSystemService(NotificationManager.class).notify(NOTIF_ID, buildNotification(text));
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null) {
+                nm.notify(NOTIF_ID, buildNotification(text));
+            }
         } catch (Exception ignored) { }
     }
 
+    private void registerScreenReceiver() {
+        if (screenRx != null) return;
+        screenRx = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (intent == null) return;
+                String act = intent.getAction();
+                if (Intent.ACTION_USER_PRESENT.equals(act)) {
+                    final JSONObject q = queued;
+                    boolean fresh = q != null && System.currentTimeMillis() < queuedUntil;
+                    queued = null;
+                    if (fresh && !destroyed) {
+                        h.postDelayed(new Runnable() {
+                            @Override public void run() { runMacro(q); }
+                        }, 500);
+                    }
+                } else if (Intent.ACTION_SCREEN_OFF.equals(act)) {
+                    // Ekran o'chganda wake lock va tinglash davom etishini ta'minlash
+                    acquireWakeLock();
+                    if (running && !paused && !destroyed) {
+                        scheduleListen(200);
+                    }
+                } else if (Intent.ACTION_SCREEN_ON.equals(act)) {
+                    acquireWakeLock();
+                    if (running && !paused && !destroyed) {
+                        scheduleListen(100);
+                    }
+                }
+            }
+        };
+        try {
+            IntentFilter f = new IntentFilter();
+            f.addAction(Intent.ACTION_USER_PRESENT);
+            f.addAction(Intent.ACTION_SCREEN_OFF);
+            f.addAction(Intent.ACTION_SCREEN_ON);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenRx, f, Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(screenRx, f);
+        } catch (Exception e) {
+            screenRx = null;
+        }
+    }
+
+    private void unregisterScreenReceiver() {
+        if (screenRx != null) {
+            try { unregisterReceiver(screenRx); } catch (Exception ignored) { }
+            screenRx = null;
+        }
+    }
 
     private void acquireWakeLock() {
         try {
             if (wakeLock == null) {
                 PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SayDo:listen");
-                wakeLock.setReferenceCounted(false);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SayDo:listen");
+                    wakeLock.setReferenceCounted(false);
+                }
             }
-            if (!wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L);
+            if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
         } catch (Exception ignored) { }
     }
 

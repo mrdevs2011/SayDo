@@ -71,7 +71,11 @@ final class TriggerMatcher {
         alias("wait", "weight");
         alias("pause", "paws");
         alias("sun", "son");
-        alias("whats", "whatsup");
+        alias("app", "application");
+        alias("youtube", "yt", "u tube");
+        alias("wifi", "wi fi");
+        alias("hello", "hi");
+        alias("off", "of");
 
         String[] filler = {"the", "a", "an", "please", "hey", "ok", "okay", "um", "uh", "uhm", "hmm", "er", "ah"};
         for (String f : filler) FILLER.add(f);
@@ -95,7 +99,10 @@ final class TriggerMatcher {
             if (Character.isLetterOrDigit(c)) sb.append(c);
             else sb.append(' ');
         }
-        String[] parts = sb.toString().trim().split("\\s+");
+        String cleaned = sb.toString().trim()
+                .replace("wi fi", "wifi")
+                .replace("u tube", "youtube");
+        String[] parts = cleaned.split("\\s+");
         StringBuilder all = new StringBuilder();
         StringBuilder kept = new StringBuilder();
         for (String p : parts) {
