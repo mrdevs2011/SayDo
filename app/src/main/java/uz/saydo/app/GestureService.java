@@ -13,8 +13,10 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
 
@@ -32,6 +34,9 @@ import uz.saydo.app.data.Gesture;
 import uz.saydo.app.data.Macro;
 import uz.saydo.app.data.SettingsRepository;
 import uz.saydo.app.data.TouchPoint;
+import uz.saydo.app.kernel.data.NodeAnchor;
+import uz.saydo.app.kernel.gesture.SmartGestureDispatcher;
+import uz.saydo.app.kernel.ui.ExecutionHudOverlay;
 import uz.saydo.app.util.GestureResampler;
 
 /**
@@ -58,19 +63,35 @@ public class GestureService extends AccessibilityService {
         double x, y;
         long st, et, dur;
         List<TouchPoint> pts = new ArrayList<>();
+        NodeAnchor anchor;
+        String varSlot = "";
+        String textToInject = "";
     }
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private int token = 0;
     private volatile boolean running = false;
     private Done current;
+    private ExecutionHudOverlay hud;
+    private String currentMacroName = "Macro";
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        hud = new ExecutionHudOverlay(this);
+        hud.setAbortCallback(this::cancel);
         FloatService.rebuild(getApplicationContext());
         Log.i(TAG, "GestureService connected");
+    }
+
+    @Override
+    public boolean onKeyEvent(KeyEvent event) {
+        if (running && event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN && event.getAction() == KeyEvent.ACTION_DOWN) {
+            cancel();
+            return true;
+        }
+        return super.onKeyEvent(event);
     }
 
     @Override
@@ -210,6 +231,7 @@ public class GestureService extends AccessibilityService {
         token++;
         running = false;
         handler.removeCallbacksAndMessages(null);
+        if (hud != null) hud.dismiss();
         Done d = current;
         current = null;
         if (d != null) d.onDone(false);
@@ -233,6 +255,8 @@ public class GestureService extends AccessibilityService {
         final int tok = ++token;
         current = done;
         running = true;
+        currentMacroName = (macro != null) ? macro.optString("trigger", "Macro") : "Macro";
+        if (hud != null) hud.show(currentMacroName, 1, list.size());
         step(list, 0, tok, 0);
         return true;
     }
@@ -258,6 +282,7 @@ public class GestureService extends AccessibilityService {
     private void finish(int tok, boolean ok) {
         if (tok != token) return;
         running = false;
+        if (hud != null) hud.dismiss();
         Done d = current;
         current = null;
         if (d != null) d.onDone(ok);
@@ -270,6 +295,7 @@ public class GestureService extends AccessibilityService {
             return;
         }
         final G g = list.get(i);
+        if (hud != null) hud.update(currentMacroName, i + 1, list.size());
         long gap = (i == 0) ? Math.min(g.st, 60) : Math.max(0, g.st - list.get(i - 1).et);
 
         handler.postDelayed(new Runnable() {
@@ -283,6 +309,36 @@ public class GestureService extends AccessibilityService {
                     final boolean okGlobal = performGlobalAction(act);
                     handler.postDelayed(() -> step(list, i + 1, tok, okGlobal ? failures : failures + 1), 250);
                     return;
+                }
+
+                // Self-healing UI node anchor resolution
+                if (g.anchor != null) {
+                    AccessibilityNodeInfo root = null;
+                    try {
+                        root = getRootInActiveWindow();
+                    } catch (Throwable ignored) {
+                    }
+                    if (root != null) {
+                        try {
+                            int[] size = screenSize();
+                            int w = size[0], h = size[1];
+                            Gesture domainGesture = new Gesture(g.type, g.action, g.x, g.y, g.st, g.et, g.dur, g.pts, g.anchor, g.varSlot, g.textToInject);
+                            SmartGestureDispatcher.ResolveResult res =
+                                    SmartGestureDispatcher.resolveAndExecute(root, domainGesture, w, h, null);
+                            if (res.handledDirectly) {
+                                handler.postDelayed(() -> step(list, i + 1, tok, failures), 60);
+                                return;
+                            } else if (res.foundAnchor) {
+                                g.x = (double) res.adjustedX / w;
+                                g.y = (double) res.adjustedY / h;
+                            }
+                        } finally {
+                            try {
+                                root.recycle();
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    }
                 }
 
                 GestureDescription gd;
@@ -419,6 +475,12 @@ public class GestureService extends AccessibilityService {
                             q.optLong("t", 0)));
                 }
             }
+            JSONObject ancObj = o.optJSONObject("anchor");
+            if (ancObj != null) {
+                g.anchor = NodeAnchor.fromJson(ancObj);
+            }
+            g.varSlot = o.optString("var", "");
+            g.textToInject = o.optString("txt", "");
             out.add(g);
         }
         Collections.sort(out, Comparator.comparingLong(a -> a.st));

@@ -60,8 +60,8 @@ public class FloatService extends Service {
     static final String ACTION_REBUILD = "uz.saydo.app.FLOAT_REBUILD";
     static final String EXTRA_TRIGGER = "trigger";
 
-    static volatile boolean showing = false;
-    static volatile boolean recording = false;
+    public static volatile boolean showing = false;
+    public static volatile boolean recording = false;
 
     private static final int SIZE_DP = 58;
     private static final int MARGIN_DP = 10;
@@ -637,6 +637,27 @@ public class FloatService extends Service {
             } else {
                 curStroke.put("type", d >= 400 ? "hold" : "tap");
             }
+
+            if (GestureService.instance != null && !"global".equals(curStroke.optString("type", "tap"))) {
+                try {
+                    android.view.accessibility.AccessibilityNodeInfo root = GestureService.instance.getRootInActiveWindow();
+                    if (root != null) {
+                        int touchPxX = (int) Math.round(curStroke.optDouble("x", 0.5) * screenW());
+                        int touchPxY = (int) Math.round(curStroke.optDouble("y", 0.5) * screenH());
+                        android.view.accessibility.AccessibilityNodeInfo targetNode = findNodeAt(root, touchPxX, touchPxY);
+                        if (targetNode != null) {
+                            uz.saydo.app.kernel.data.NodeAnchor anchor = uz.saydo.app.kernel.gesture.SmartGestureDispatcher.extractAnchor(targetNode);
+                            if (anchor != null) {
+                                curStroke.put("anchor", anchor.toJson());
+                            }
+                            targetNode.recycle();
+                        }
+                        root.recycle();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+
             if (gestures.size() < MAX_GESTURES) {
                 gestures.add(curStroke);
                 saved = curStroke;
@@ -674,6 +695,26 @@ public class FloatService extends Service {
         if (py > dm.heightPixels - 64f * dens) return durMs >= 450 ? "recents" : "home";
         if (px < 32f * dens || px > dm.widthPixels - 32f * dens) return "back";
         return null;
+    }
+
+    private android.view.accessibility.AccessibilityNodeInfo findNodeAt(android.view.accessibility.AccessibilityNodeInfo root, int x, int y) {
+        if (root == null) return null;
+        android.graphics.Rect rect = new android.graphics.Rect();
+        root.getBoundsInScreen(rect);
+        if (!rect.contains(x, y)) return null;
+
+        for (int i = 0; i < root.getChildCount(); i++) {
+            android.view.accessibility.AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                android.view.accessibility.AccessibilityNodeInfo found = findNodeAt(child, x, y);
+                if (found != null) {
+                    if (child != found) child.recycle();
+                    return found;
+                }
+                child.recycle();
+            }
+        }
+        return android.view.accessibility.AccessibilityNodeInfo.obtain(root);
     }
 
     private int passToken = 0;

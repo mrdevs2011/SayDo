@@ -57,14 +57,31 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
 
+        <activity
+            android:name=".kernel.ui.MacroStudioActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/AppTheme" />
+
         <service
             android:name=".VoiceService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
 
         <service
             android:name=".FloatService"
             android:exported="false" />
+
+        <service
+            android:name=".kernel.ui.SayDoTileService"
+            android:icon="@drawable/ic_stat_mic"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".GestureService"
