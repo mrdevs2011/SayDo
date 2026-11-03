@@ -4,10 +4,7 @@ import android.animation.ValueAnimator;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -590,10 +587,11 @@ public class FloatService extends Service {
             String globalAction = cancelled
                     ? edgeAction(curStroke.optDouble("x", 0.5), curStroke.optDouble("y", 0.5), d)
                     : null;
+            boolean actualSwipe = isActualSwipe(curPath, screenW(), screenH());
             if (globalAction != null) {
                 curStroke.put("type", "global");
                 curStroke.put("action", globalAction);
-            } else if (curPath != null && curPath.length() > 1) {
+            } else if (actualSwipe) {
                 curStroke.put("type", "swipe");
                 curStroke.put("path", curPath);
             } else {
@@ -608,6 +606,26 @@ public class FloatService extends Service {
         curPath = null;
         if (recordView != null) recordView.clearVisual();
         if (inject && saved != null && recording) passThrough(saved);
+    }
+
+    /** Haqiqiy surish (swipe) yoki oddiy bosish (tap) ekanligini touch slop bo'yicha aniqlaydi */
+    private boolean isActualSwipe(JSONArray path, int sw, int sh) {
+        if (path == null || path.length() < 2) return false;
+        JSONObject p0 = path.optJSONObject(0);
+        if (p0 == null) return false;
+        double x0 = p0.optDouble("x", 0) * sw;
+        double y0 = p0.optDouble("y", 0) * sh;
+        double maxDistSq = 0;
+        for (int i = 1; i < path.length(); i++) {
+            JSONObject p = path.optJSONObject(i);
+            if (p == null) continue;
+            double dx = p.optDouble("x", 0) * sw - x0;
+            double dy = p.optDouble("y", 0) * sh - y0;
+            double dSq = dx * dx + dy * dy;
+            if (dSq > maxDistSq) maxDistSq = dSq;
+        }
+        double touchSlopPx = 12 * dens;
+        return maxDistSq >= touchSlopPx * touchSlopPx;
     }
 
     /** Ekran chetidan boshlangan va tizim olib qo'ygan swipe: orqaga / uy / so'nggi ilovalar. */
