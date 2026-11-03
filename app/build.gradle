@@ -10,8 +10,8 @@ android {
         applicationId 'uz.saydo.app'
         minSdk 26
         targetSdk 34
-        versionCode 17
-        versionName '2.8.0'
+        versionCode 18
+        versionName '2.9.0'
     }
 
     signingConfigs {
@@ -27,6 +27,7 @@ android {
         release {
             minifyEnabled false
             shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release
         }
         debug {
