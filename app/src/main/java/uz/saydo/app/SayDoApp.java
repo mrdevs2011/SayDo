@@ -138,7 +138,7 @@ public class SayDoApp extends Application implements ComponentCallbacks2 {
             pw.println("THREAD: " + (thread != null ? thread.getName() + " (id=" + thread.getId() + ")" : "unknown"));
             pw.println("DEVICE: " + Build.MANUFACTURER + " " + Build.MODEL + " (" + Build.DEVICE + ")");
             pw.println("OS_VERSION: Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
-            pw.println("APP_VERSION: 2.8.0");
+            pw.println("APP_VERSION: 2.9.0");
             Runtime rt = Runtime.getRuntime();
             long freeMem = rt.freeMemory();
             long totalMem = rt.totalMemory();
