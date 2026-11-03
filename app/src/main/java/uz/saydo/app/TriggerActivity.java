@@ -1,6 +1,7 @@
 package uz.saydo.app;
 
 import android.app.Activity;
+import android.app.KeyguardManager;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -112,8 +113,31 @@ public class TriggerActivity extends Activity {
                     Toast.makeText(TriggerActivity.this, "Enter a phrase", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                FloatService.startRecording(TriggerActivity.this, t);
-                finish();
+                if (!Net.isOnline(TriggerActivity.this)) {
+                    Toast.makeText(TriggerActivity.this, "You're offline", Toast.LENGTH_SHORT).show();
+                    finish();
+                    return;
+                }
+                final String phrase = t;
+                if (Setup.isLocked(TriggerActivity.this)) {
+                    // Parol so'raladi; ochilgach avtomatik Home'ga o'tib yozish boshlanadi
+                    KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+                    km.requestDismissKeyguard(TriggerActivity.this, new KeyguardManager.KeyguardDismissCallback() {
+                        @Override public void onDismissSucceeded() {
+                            FloatService.startRecording(TriggerActivity.this, phrase);
+                            finish();
+                        }
+                        @Override public void onDismissCancelled() {
+                            Toast.makeText(TriggerActivity.this, "Unlock to continue", Toast.LENGTH_SHORT).show();
+                        }
+                        @Override public void onDismissError() {
+                            Toast.makeText(TriggerActivity.this, "Could not unlock", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                } else {
+                    FloatService.startRecording(TriggerActivity.this, phrase);
+                    finish();
+                }
             }
         };
         go.setOnClickListener(new View.OnClickListener() {

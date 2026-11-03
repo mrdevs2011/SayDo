@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -10,72 +9,27 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:paddingTop="48dp">
+        android:paddingTop="56dp">
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/titleSayDo"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="20dp"
-            android:paddingBottom="8dp">
-
-            <TextView
-                android:id="@+id/titleSayDo"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="SayDo"
-                android:textColor="@color/text_primary"
-                android:textSize="30sp"
-                android:textStyle="bold" />
-
-            <ImageButton
-                android:id="@+id/btnSettings"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Settings"
-                android:src="@android:drawable/ic_menu_preferences"
-                android:scaleType="centerInside"
-                app:tint="@color/text_secondary" />
-        </LinearLayout>
-
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:paddingHorizontal="16dp"
-            android:paddingBottom="12dp">
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/chipAcc"
-                    android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/bg_chip"
-                    android:gravity="center"
-                    android:paddingHorizontal="14dp"
-                    android:text="Accessibility"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </HorizontalScrollView>
+            android:paddingHorizontal="24dp"
+            android:text="SayDo"
+            android:textColor="@color/text_primary"
+            android:textSize="34sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/hint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
-            android:paddingBottom="8dp"
+            android:paddingHorizontal="24dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="14dp"
             android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
+            android:textSize="14sp" />
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/list"
@@ -84,7 +38,7 @@
             android:layout_weight="1"
             android:clipToPadding="false"
             android:paddingHorizontal="16dp"
-            android:paddingBottom="100dp" />
+            android:paddingBottom="120dp" />
 
         <LinearLayout
             android:id="@+id/empty"
@@ -114,34 +68,54 @@
         </LinearLayout>
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/masterBar"
-        android:layout_width="wrap_content"
-        android:layout_height="56dp"
+    <TextView
+        android:id="@+id/btnStart"
+        android:layout_width="240dp"
+        android:layout_height="64dp"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="28dp"
-        android:background="@drawable/bg_master"
+        android:layout_marginBottom="36dp"
+        android:background="@drawable/bg_btn_start"
         android:elevation="8dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="20dp">
+        android:gravity="center"
+        android:text="START"
+        android:textColor="@android:color/white"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:id="@+id/offline"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg_deep"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="140dp"
+            android:layout_height="140dp"
+            android:contentDescription="Offline"
+            android:src="@drawable/ic_wifi_off" />
 
         <TextView
-            android:id="@+id/masterLabel"
-            android:layout_width="40dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="OFF"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <com.google.android.material.switchmaterial.SwitchMaterial
-            android:id="@+id/masterSwitch"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            app:thumbTint="@color/text_primary"
-            app:trackTint="@color/chip_off" />
+            android:layout_marginTop="24dp"
+            android:text="You're offline"
+            android:textColor="@color/text_primary"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="Connect to Wi-Fi or mobile data to use SayDo"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
     </LinearLayout>
 </FrameLayout>

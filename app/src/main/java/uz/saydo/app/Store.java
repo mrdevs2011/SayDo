@@ -9,6 +9,7 @@ final class Store {
     private static final String K_MACROS = "macros";
     private static final String K_LANG = "lang";
     private static final String K_ENABLED = "master_on";
+    private static final String K_BATT = "batt_asked";
     private static final int MAX_MACROS_JSON = 512 * 1024;
 
     private static final String LANG = "en-US";
@@ -50,6 +51,16 @@ final class Store {
 
     static void setEnabled(Context c, boolean on) {
         try { sp(c).edit().putBoolean(K_ENABLED, on).commit(); }
+        catch (Exception ignored) { }
+    }
+
+    static boolean batteryAsked(Context c) {
+        try { return sp(c).getBoolean(K_BATT, false); }
+        catch (Exception e) { return true; }
+    }
+
+    static void setBatteryAsked(Context c) {
+        try { sp(c).edit().putBoolean(K_BATT, true).commit(); }
         catch (Exception ignored) { }
     }
 }

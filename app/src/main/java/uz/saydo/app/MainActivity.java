@@ -1,7 +1,6 @@
 package uz.saydo.app;
 
 import android.Manifest;
-import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -11,7 +10,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
-import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,17 +19,18 @@ import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.material.switchmaterial.SwitchMaterial;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * To'liq native UI — WebView/HTML yo'q.
+ * Toza bosh ekran: sarlavha, shortcutlar ro'yxati va bitta katta START/STOP tugmasi.
+ * START bosilganda to'liq sozlanmagan bo'lsa kerakli sozlamaga o'tkazadi.
+ * Internet yo'q bo'lsa katta "You're offline" ekrani chiqadi va hech narsa ishlamaydi.
  */
 public class MainActivity extends AppCompatActivity implements MacroAdapter.Listener {
 
     static volatile MainActivity current;
+    static final String EXTRA_ASK_MIC = "ask_mic";
 
     private static final int REQ_AUDIO = 101;
     private static final int REQ_NOTIF = 102;
@@ -39,14 +38,24 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean destroyed = false;
     private boolean askedNotif = false;
-    private boolean suppressSwitch = false;
+
+    /** START bosilgan va sozlash zanjiri davom etmoqda. */
+    private boolean pendingStart = false;
+    private int lastStep = -1;
 
     private RecyclerView list;
-    private View empty;
-    private TextView hint, chipAcc, masterLabel;
-    private SwitchMaterial masterSwitch;
+    private View empty, offline;
+    private TextView hint, btnStart;
     private MacroAdapter adapter;
     private JSONArray macros = new JSONArray();
+
+    private final Net.Listener netListener = new Net.Listener() {
+        @Override public void onChanged(boolean online) {
+            if (destroyed) return;
+            refreshUi();
+            if (online) onResume2();
+        }
+    };
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -64,61 +73,71 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
         list = findViewById(R.id.list);
         empty = findViewById(R.id.empty);
+        offline = findViewById(R.id.offline);
         hint = findViewById(R.id.hint);
-        chipAcc = findViewById(R.id.chipAcc);
-        masterLabel = findViewById(R.id.masterLabel);
-        masterSwitch = findViewById(R.id.masterSwitch);
-        ImageButton btnSettings = findViewById(R.id.btnSettings);
+        btnStart = findViewById(R.id.btnStart);
 
         adapter = new MacroAdapter(this);
         list.setLayoutManager(new LinearLayoutManager(this));
         list.setAdapter(adapter);
         list.setHasFixedSize(true);
 
-        masterSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (suppressSwitch || destroyed) return;
-            applyMaster(isChecked);
-        });
-
-        chipAcc.setOnClickListener(v -> {
-            if (!isAccessibilityEnabled()) {
-                toast("Enable SayDo in Accessibility");
-                openAccessibility();
-            } else {
-                toast("Accessibility is on");
-            }
-        });
-        chipAcc.setOnLongClickListener(v -> {
-            openAppInfo();
-            return true;
-        });
-
-        btnSettings.setOnClickListener(v -> openAppInfo());
+        btnStart.setOnClickListener(v -> onStartClicked());
 
         reloadMacros();
         refreshUi();
+        handleIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIntent(intent);
+    }
+
+    private void handleIntent(Intent i) {
+        if (i != null && i.getBooleanExtra(EXTRA_ASK_MIC, false)) {
+            i.removeExtra(EXTRA_ASK_MIC);
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestMic();
+            }
+        }
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         current = this;
+        Net.addListener(netListener);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (Store.isEnabled(this) && FloatService.canOverlay(this)) {
-            FloatService.show(this);
-            if (!VoiceService.running
-                    && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                startListeningFlow();
-            }
-        }
+        onResume2();
         reloadMacros();
         refreshUi();
         ui.removeCallbacks(poll);
         ui.postDelayed(poll, 1200);
+    }
+
+    private void onResume2() {
+        if (destroyed || !Net.isOnline(this)) return;
+        if (pendingStart) {
+            continueStart();
+            return;
+        }
+        if (!Store.isEnabled(this)) return;
+        if (Setup.missing(this) != Setup.OK) {
+            // Ruxsat qaytarib olingan: qaytadan START bilan sozlanadi
+            Store.setEnabled(this, false);
+            FloatService.hide(this);
+            stopListening();
+            return;
+        }
+        FloatService.show(this);
+        if (!VoiceService.running) startListeningFlow();
     }
 
     @Override
@@ -129,6 +148,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     @Override
     protected void onStop() {
+        Net.removeListener(netListener);
         if (current == this) current = null;
         super.onStop();
     }
@@ -137,6 +157,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     protected void onDestroy() {
         destroyed = true;
         ui.removeCallbacksAndMessages(null);
+        Net.removeListener(netListener);
         if (current == this) current = null;
         super.onDestroy();
     }
@@ -162,62 +183,80 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     private void refreshUi() {
         if (destroyed) return;
-        boolean acc = isAccessibilityEnabled();
-        boolean listening = VoiceService.running;
-        boolean enabled = Store.isEnabled(this);
-        styleChip(chipAcc, acc, "Accessibility", !acc);
+        boolean online = Net.isOnline(this);
+        offline.setVisibility(online ? View.GONE : View.VISIBLE);
+        if (!online) return;
 
-        if (!acc) {
-            hint.setText("Enable Accessibility to run actions");
-            hint.setTextColor(ContextCompat.getColor(this, R.color.danger));
-        } else if (listening) {
-            hint.setText("Listening · EN");
+        boolean enabled = Store.isEnabled(this);
+        boolean listening = VoiceService.running;
+        btnStart.setText(enabled ? "STOP" : "START");
+        btnStart.setBackgroundResource(enabled ? R.drawable.bg_btn_stop : R.drawable.bg_btn_start);
+
+        if (enabled && listening) {
+            hint.setText("Listening · English");
             hint.setTextColor(ContextCompat.getColor(this, R.color.success));
         } else if (enabled) {
-            hint.setText("ON · record with floating START");
+            hint.setText("Starting…");
             hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         } else {
-            hint.setText("OFF · turn ON to use");
+            hint.setText("Tap START to begin");
             hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
-        }
-
-        suppressSwitch = true;
-        masterSwitch.setChecked(enabled);
-        masterLabel.setText(enabled ? "ON" : "OFF");
-        suppressSwitch = false;
-    }
-
-    private void styleChip(TextView chip, boolean on, String text, boolean bad) {
-        chip.setText(text);
-        if (bad) {
-            chip.setBackgroundResource(R.drawable.bg_chip_bad);
-            chip.setTextColor(0xFFFFFFFF);
-        } else if (on) {
-            chip.setBackgroundResource(R.drawable.bg_chip_on);
-            chip.setTextColor(0xFFFFFFFF);
-        } else {
-            chip.setBackgroundResource(R.drawable.bg_chip);
-            chip.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         }
     }
 
-    // ------------------------------------------------------------------ master
+    // ------------------------------------------------------------------ start / stop
+
+    private void onStartClicked() {
+        if (!Net.isOnline(this)) {
+            refreshUi();
+            return;
+        }
+        if (Store.isEnabled(this)) {
+            applyMaster(false);
+            return;
+        }
+        pendingStart = true;
+        lastStep = -1;
+        continueStart();
+    }
+
+    /** Sozlash zanjiri: yetishmayotgan birinchi qadamni ochadi; hammasi tayyor bo'lsa ishga tushiradi. */
+    private void continueStart() {
+        if (!pendingStart || destroyed) return;
+        int step = Setup.missing(this);
+        if (step == Setup.OK) {
+            pendingStart = false;
+            lastStep = -1;
+            applyMaster(true);
+            return;
+        }
+        if (step == lastStep) {
+            // Foydalanuvchi shu qadamni bajarmasdan qaytdi
+            pendingStart = false;
+            lastStep = -1;
+            toast(stepName(step) + " is required");
+            refreshUi();
+            return;
+        }
+        lastStep = step;
+        if (step == Setup.NEED_MIC) requestMic();
+        else Setup.route(this, step);
+    }
+
+    private String stepName(int step) {
+        switch (step) {
+            case Setup.NEED_OVERLAY: return "Display over other apps";
+            case Setup.NEED_ACCESSIBILITY: return "Accessibility";
+            case Setup.NEED_MIC: return "Microphone";
+            default: return "Setup";
+        }
+    }
 
     private void applyMaster(boolean on) {
         if (destroyed) return;
         Store.setEnabled(this, on);
         if (on) {
-            if (!FloatService.canOverlay(this)) {
-                try {
-                    startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName())));
-                    toast("Allow display over other apps");
-                } catch (Exception e) {
-                    toast("Could not open settings");
-                }
-            } else {
-                FloatService.show(this);
-            }
+            FloatService.show(this);
             startListeningFlow();
             maybeRequestBatteryOpt();
         } else {
@@ -228,11 +267,12 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     private void maybeRequestBatteryOpt() {
-        if (Build.VERSION.SDK_INT < 23) return;
+        if (Build.VERSION.SDK_INT < 23 || Store.batteryAsked(this)) return;
         try {
             String pkg = getPackageName();
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
             if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
+                Store.setBatteryAsked(this);
                 startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         Uri.parse("package:" + pkg)));
             }
@@ -241,10 +281,14 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     // ------------------------------------------------------------------ voice
 
+    private void requestMic() {
+        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
+    }
+
     private void startListeningFlow() {
-        if (destroyed || !Store.isEnabled(this)) return;
+        if (destroyed || !Store.isEnabled(this) || !Net.isOnline(this)) return;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
+            requestMic();
             return;
         }
         if (Build.VERSION.SDK_INT >= 33 && !askedNotif
@@ -274,7 +318,9 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         super.onRequestPermissionsResult(code, perms, results);
         if (destroyed) return;
         if (code == REQ_AUDIO) {
-            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            if (pendingStart) {
+                continueStart();
+            } else if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 startListeningFlow();
             } else {
                 toast("Microphone permission required");
@@ -291,8 +337,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
         try {
             JSONObject m = macros.optJSONObject(index);
             int r = Runner.run(this, m, null);
-            if (r == Runner.NO_ACCESSIBILITY) toast("Enable Accessibility first");
+            if (r == Runner.NO_ACCESSIBILITY) Setup.route(this, Setup.NEED_ACCESSIBILITY);
             else if (r == Runner.INVALID) toast("Invalid shortcut");
+            else if (r == Runner.LOCKED) toast("Unlock your phone first");
+            else if (r == Runner.OFFLINE) refreshUi();
         } catch (Exception e) {
             toast("Could not run");
         }
@@ -322,38 +370,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     // ------------------------------------------------------------------ helpers
-
-    private boolean isAccessibilityEnabled() {
-        try {
-            if (GestureService.instance != null) return true;
-            String enabled = Settings.Secure.getString(
-                    getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            if (enabled == null || enabled.isEmpty()) return false;
-            ComponentName me = new ComponentName(this, GestureService.class);
-            for (String part : enabled.split(":")) {
-                ComponentName c = ComponentName.unflattenFromString(part);
-                if (me.equals(c)) return true;
-            }
-        } catch (Exception ignored) { }
-        return false;
-    }
-
-    private void openAccessibility() {
-        try {
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        } catch (Exception e) {
-            toast("Could not open settings");
-        }
-    }
-
-    private void openAppInfo() {
-        try {
-            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:" + getPackageName())));
-        } catch (Exception e) {
-            toast("Could not open settings");
-        }
-    }
 
     private void toast(String m) {
         if (destroyed || m == null) return;

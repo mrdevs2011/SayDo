@@ -3,14 +3,19 @@ package uz.saydo.app;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -18,7 +23,9 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Yozib olingan tap / hold / swipe harakatlarini butun tizim bo'ylab (boshqa ilovalar ustida)
@@ -56,12 +63,15 @@ public class GestureService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        // Float endi accessibility qatlamida (lock screen ustida ham ko'rinadi)
+        FloatService.rebuild(getApplicationContext());
     }
 
     @Override
     public boolean onUnbind(Intent intent) {
         cancel();
         if (instance == this) instance = null;
+        FloatService.rebuild(getApplicationContext());
         return super.onUnbind(intent);
     }
 
@@ -74,7 +84,78 @@ public class GestureService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Ekran mazmuni o'qilmaydi — bizga faqat gest yuborish kerak.
+        // Ekran mazmuni o'qilmaydi. Faqat qaysi ilova oldinda ekanini (Home'dami) bilamiz.
+        if (event == null) return;
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            CharSequence p = event.getPackageName();
+            if (p != null) {
+                String pkg = p.toString();
+                if (!ignoredPackages().contains(pkg)) lastPkg = pkg;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- Home
+
+    private final Handler homeHandler = new Handler(Looper.getMainLooper());
+    private volatile String lastPkg = "";
+
+    private Set<String> ignoredPackages() {
+        Set<String> s = new HashSet<String>();
+        s.add(getPackageName());
+        s.add("com.android.systemui");
+        s.add("android");
+        try {
+            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                for (InputMethodInfo i : imm.getEnabledInputMethodList()) s.add(i.getPackageName());
+            }
+        } catch (Exception ignored) { }
+        return s;
+    }
+
+    private Set<String> launcherPackages() {
+        Set<String> s = new HashSet<String>();
+        try {
+            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+            for (ResolveInfo ri : getPackageManager().queryIntentActivities(home, 0)) {
+                if (ri.activityInfo != null) s.add(ri.activityInfo.packageName);
+            }
+        } catch (Exception ignored) { }
+        return s;
+    }
+
+    /** Hozir Home (launcher) oldindami. */
+    boolean onHome() {
+        return launcherPackages().contains(lastPkg);
+    }
+
+    /**
+     * Home'ga o'tadi va launcher haqiqatan oldinga chiqquncha kutadi
+     * (kerak bo'lsa Home'ni qayta bosadi), keyin {@code after} ni ishga tushiradi.
+     */
+    void goHomeThen(final Runnable after) {
+        performGlobalAction(GLOBAL_ACTION_HOME);
+        final long t0 = SystemClock.uptimeMillis();
+        homeHandler.postDelayed(new Runnable() {
+            boolean resent = false;
+            @Override public void run() {
+                long el = SystemClock.uptimeMillis() - t0;
+                if (el >= 300 && onHome()) {
+                    homeHandler.postDelayed(after, 250);
+                    return;
+                }
+                if (!resent && el > 900) {
+                    resent = true;
+                    performGlobalAction(GLOBAL_ACTION_HOME);
+                }
+                if (el > 2200) {
+                    homeHandler.postDelayed(after, 250);
+                    return;
+                }
+                homeHandler.postDelayed(this, 100);
+            }
+        }, 150);
     }
 
     @Override

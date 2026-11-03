@@ -1,5 +1,6 @@
 package uz.saydo.app;
 
+import android.animation.ValueAnimator;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -19,6 +20,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -48,6 +50,7 @@ public class FloatService extends Service {
     static final String ACTION_HIDE = "uz.saydo.app.FLOAT_HIDE";
     static final String ACTION_REFRESH = "uz.saydo.app.FLOAT_REFRESH";
     static final String ACTION_START_REC = "uz.saydo.app.FLOAT_START_REC";
+    static final String ACTION_REBUILD = "uz.saydo.app.FLOAT_REBUILD";
     static final String EXTRA_TRIGGER = "trigger";
 
     static volatile boolean showing = false;
@@ -55,6 +58,8 @@ public class FloatService extends Service {
 
     private static final int SIZE_DP = 58;
     private static final int MARGIN_DP = 10;
+    /** Devor tomonga shuncha (tugma o'lchamining ulushi) itarilsa, yarmi devorga kirib ketadi. */
+    private static final float DOCK_PUSH_FRACTION = 0.30f;
     private static final int MAX_GESTURES = 200;
     private static final int MAX_PATH_POINTS = 500;
 
@@ -64,6 +69,10 @@ public class FloatService extends Service {
     private TextView bubbleTxt;
     private GradientDrawable bubbleBg;
     private WindowManager.LayoutParams bubbleLp;
+    private WindowManager bubbleWm;
+    private WindowManager recordWm;
+    private WindowManager cancelWm;
+    private ValueAnimator dockAnim;
 
     private RecordView recordView;
     private WindowManager.LayoutParams recordLp;
@@ -109,6 +118,26 @@ public class FloatService extends Service {
             return START_NOT_STICKY;
         }
 
+        if (!Net.isOnline(this)) {
+            // Internet yo'q: float ham chiqmaydi
+            stopRecording(false);
+            hideTriggerPanel();
+            removeBubble();
+            showing = false;
+            recording = false;
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        if (ACTION_REBUILD.equals(action)) {
+            if (bubble != null) {
+                removeBubble();
+                addBubble();
+                showing = true;
+            }
+            return START_STICKY;
+        }
+
         if (!Settings.canDrawOverlays(this)) {
             stopRecording(false);
             removeBubble();
@@ -122,7 +151,7 @@ public class FloatService extends Service {
             String t = intent.getStringExtra(EXTRA_TRIGGER);
             if (t != null && t.trim().length() > 0) {
                 if (bubble == null) addBubble();
-                beginRecording(t.trim());
+                startRecordingFlow(t.trim());
             }
             showing = true;
             return START_STICKY;
@@ -176,10 +205,13 @@ public class FloatService extends Service {
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_PHONE;
 
+        // Accessibility qatlami lock screen ustida ham ko'rinadi
+        bubbleWm = overlayWm();
         bubbleLp = new WindowManager.LayoutParams(
-                sizePx, sizePx, type,
+                sizePx, sizePx, overlayType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                         | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
         bubbleLp.gravity = Gravity.TOP | Gravity.START;
@@ -193,7 +225,7 @@ public class FloatService extends Service {
         bubble = root;
 
         try {
-            wm.addView(bubble, bubbleLp);
+            bubbleWm.addView(bubble, bubbleLp);
             refreshBubble();
         } catch (Exception e) {
             bubble = null;
@@ -202,8 +234,10 @@ public class FloatService extends Service {
     }
 
     private void removeBubble() {
-        if (bubble != null && wm != null) {
-            try { wm.removeView(bubble); } catch (Exception ignored) { }
+        if (dockAnim != null) { dockAnim.cancel(); dockAnim = null; }
+        if (bubble != null) {
+            WindowManager w = bubbleWm != null ? bubbleWm : wm;
+            try { w.removeView(bubble); } catch (Exception ignored) { }
         }
         bubble = null;
         showing = false;
@@ -225,6 +259,7 @@ public class FloatService extends Service {
         public boolean onTouch(View v, MotionEvent e) {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
+                    if (dockAnim != null) dockAnim.cancel();
                     downX = e.getRawX();
                     downY = e.getRawY();
                     startX = bubbleLp.x;
@@ -239,9 +274,12 @@ public class FloatService extends Service {
                     float dy = e.getRawY() - downY;
                     if (!moved && (dx * dx + dy * dy) > 64) moved = true;
                     if (moved) {
-                        bubbleLp.x = startX + Math.round(dx);
+                        int half = sizePx / 2;
+                        int nx = startX + Math.round(dx);
+                        // Yarmigacha devorga kirishi mumkin, undan ortiq emas
+                        bubbleLp.x = Math.max(-half, Math.min(screenW() - sizePx + half, nx));
                         bubbleLp.y = startY + Math.round(dy);
-                        try { wm.updateViewLayout(bubble, bubbleLp); } catch (Exception ignored) { }
+                        updateBubble();
                         cancelArmed = isOverCancelZone(e.getRawX(), e.getRawY());
                         refreshCancelZone();
                     }
@@ -269,15 +307,60 @@ public class FloatService extends Service {
         }
     };
 
+    /**
+     * Qo'yib yuborilganda: oddiy holatda to'liq ko'rinadigan chetga yopishadi.
+     * Faqat devor tomonga qasddan (DOCK_PUSH_FRACTION dan ko'proq) itarilsa, 50% devorga kirib ketadi.
+     */
     private void snapBubble() {
-        int screenW = getResources().getDisplayMetrics().widthPixels;
+        int sw = screenW();
+        int sh = screenH();
         int margin = Math.round(MARGIN_DP * dens);
-        if (bubbleLp.x + sizePx / 2 < screenW / 2) bubbleLp.x = margin;
-        else bubbleLp.x = screenW - sizePx - margin;
-        if (bubbleLp.y < margin) bubbleLp.y = margin;
-        int maxY = getResources().getDisplayMetrics().heightPixels - sizePx - margin;
-        if (bubbleLp.y > maxY) bubbleLp.y = maxY;
-        try { wm.updateViewLayout(bubble, bubbleLp); } catch (Exception ignored) { }
+        int half = sizePx / 2;
+        float overLeft = -bubbleLp.x;
+        float overRight = bubbleLp.x + sizePx - sw;
+        float deliberate = sizePx * DOCK_PUSH_FRACTION;
+
+        int targetX;
+        if (overLeft >= deliberate) targetX = -half;
+        else if (overRight >= deliberate) targetX = sw - half;
+        else if (bubbleLp.x + sizePx / 2 < sw / 2) targetX = margin;
+        else targetX = sw - sizePx - margin;
+
+        int maxY = sh - sizePx - margin;
+        int targetY = Math.max(margin, Math.min(maxY, bubbleLp.y));
+        animateBubbleTo(targetX, targetY);
+    }
+
+    private void animateBubbleTo(final int tx, final int ty) {
+        if (bubble == null) return;
+        if (dockAnim != null) dockAnim.cancel();
+        final int sx = bubbleLp.x;
+        final int sy = bubbleLp.y;
+        dockAnim = ValueAnimator.ofFloat(0f, 1f);
+        dockAnim.setDuration(180);
+        dockAnim.setInterpolator(new DecelerateInterpolator());
+        dockAnim.addUpdateListener(a -> {
+            if (bubble == null) return;
+            float f = (float) a.getAnimatedValue();
+            bubbleLp.x = sx + Math.round((tx - sx) * f);
+            bubbleLp.y = sy + Math.round((ty - sy) * f);
+            updateBubble();
+        });
+        dockAnim.start();
+    }
+
+    private void updateBubble() {
+        if (bubble == null) return;
+        WindowManager w = bubbleWm != null ? bubbleWm : wm;
+        try { w.updateViewLayout(bubble, bubbleLp); } catch (Exception ignored) { }
+    }
+
+    private int screenW() {
+        return getResources().getDisplayMetrics().widthPixels;
+    }
+
+    private int screenH() {
+        return getResources().getDisplayMetrics().heightPixels;
     }
 
     private void onBubbleTap() {
@@ -285,15 +368,62 @@ public class FloatService extends Service {
             stopRecording(true);
             return;
         }
-        if (!Settings.canDrawOverlays(this)) {
-            toast("Overlay permission missing");
+        if (!Net.isOnline(this)) {
+            hide(this);
             return;
         }
         if (!Store.isEnabled(this)) {
             toast("Turn ON first");
             return;
         }
+        // To'liq sozlanmagan bo'lsa, trigger so'ralishidan oldin kerakli sozlamaga o'tkazadi
+        int miss = Setup.missing(this);
+        if (miss != Setup.OK) {
+            Setup.route(this, miss);
+            return;
+        }
+        if (Setup.isLocked(this)) {
+            openTriggerActivity();
+            return;
+        }
         showTriggerPanel();
+    }
+
+    /** Qulf ekranida trigger nomi qulf ustidagi Activity orqali kiritiladi. */
+    private void openTriggerActivity() {
+        try {
+            startActivity(new Intent(this, TriggerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        } catch (Exception e) {
+            toast("Could not open");
+        }
+    }
+
+    /** Trigger nomi kiritilgach: har doim Home'ga o'tadi va faqat shundan keyin yozishni boshlaydi. */
+    private void startRecordingFlow(String trigger) {
+        String t = trigger == null ? "" : trigger.trim();
+        if (t.isEmpty()) return;
+        if (t.length() > 60) t = t.substring(0, 60);
+        if (!Net.isOnline(this)) {
+            hide(this);
+            return;
+        }
+        if (isTriggerTaken(t)) {
+            toast("Already used: \"" + t + "\"");
+            return;
+        }
+        GestureService g = GestureService.instance;
+        if (g == null) {
+            Setup.route(this, Setup.NEED_ACCESSIBILITY);
+            return;
+        }
+        final String name = t;
+        g.goHomeThen(new Runnable() {
+            @Override public void run() {
+                if (bubble == null) return;
+                beginRecording(name);
+            }
+        });
     }
 
     private void onCancelDrop() {
@@ -389,10 +519,11 @@ public class FloatService extends Service {
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_PHONE;
 
+        recordWm = overlayWm();
         recordLp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
-                type,
+                overlayType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
@@ -401,12 +532,12 @@ public class FloatService extends Service {
         recordLp.gravity = Gravity.TOP | Gravity.START;
 
         try {
-            wm.addView(recordView, recordLp);
+            recordWm.addView(recordView, recordLp);
             // Bubble ni eng yuqorida qoldirish
             if (bubble != null) {
                 try {
-                    wm.removeView(bubble);
-                    wm.addView(bubble, bubbleLp);
+                    bubbleWm.removeView(bubble);
+                    bubbleWm.addView(bubble, bubbleLp);
                 } catch (Exception ignored) { }
             }
         } catch (Exception e) {
@@ -418,8 +549,9 @@ public class FloatService extends Service {
     }
 
     private void removeRecordLayer() {
-        if (recordView != null && wm != null) {
-            try { wm.removeView(recordView); } catch (Exception ignored) { }
+        if (recordView != null) {
+            WindowManager w = recordWm != null ? recordWm : wm;
+            try { w.removeView(recordView); } catch (Exception ignored) { }
         }
         recordView = null;
     }
@@ -666,7 +798,7 @@ public class FloatService extends Service {
                     return;
                 }
                 hideTriggerPanel();
-                beginRecording(phrase);
+                startRecordingFlow(phrase);
             }
         };
         go.setOnClickListener(new View.OnClickListener() {
@@ -744,8 +876,9 @@ public class FloatService extends Service {
         int type = Build.VERSION.SDK_INT >= 26
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_PHONE;
+        cancelWm = overlayWm();
         cancelLp = new WindowManager.LayoutParams(
-                zone, zone, type,
+                zone, zone, overlayType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -755,7 +888,7 @@ public class FloatService extends Service {
         cancelLp.y = Math.round(36 * dens);
 
         try {
-            wm.addView(x, cancelLp);
+            cancelWm.addView(x, cancelLp);
             cancelZone = x;
             cancelArmed = false;
         } catch (Exception e) {
@@ -764,8 +897,9 @@ public class FloatService extends Service {
     }
 
     private void hideCancelZone() {
-        if (cancelZone != null && wm != null) {
-            try { wm.removeView(cancelZone); } catch (Exception ignored) { }
+        if (cancelZone != null) {
+            WindowManager w = cancelWm != null ? cancelWm : wm;
+            try { w.removeView(cancelZone); } catch (Exception ignored) { }
         }
         cancelZone = null;
         cancelLp = null;
@@ -809,6 +943,25 @@ public class FloatService extends Service {
         return false;
     }
 
+    /** Accessibility yoqilgan bo'lsa uning oynasi (lock screen ustida ham ko'rinadi), aks holda oddiy overlay. */
+    private WindowManager overlayWm() {
+        GestureService g = GestureService.instance;
+        if (g != null) {
+            try {
+                WindowManager w = (WindowManager) g.getSystemService(WINDOW_SERVICE);
+                if (w != null) return w;
+            } catch (Exception ignored) { }
+        }
+        return wm;
+    }
+
+    private int overlayType() {
+        if (GestureService.instance != null) return WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;
+        return Build.VERSION.SDK_INT >= 26
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
+    }
+
     private void toast(final String msg) {
         h.post(new Runnable() {
             @Override public void run() {
@@ -827,6 +980,14 @@ public class FloatService extends Service {
 
     static void hide(Context ctx) {
         ctx.startService(new Intent(ctx, FloatService.class).setAction(ACTION_HIDE));
+    }
+
+    /** Accessibility yoqilsa/o'chsa floatni mos oyna turida qayta quradi. */
+    static void rebuild(Context ctx) {
+        if (!showing) return;
+        try {
+            ctx.startService(new Intent(ctx, FloatService.class).setAction(ACTION_REBUILD));
+        } catch (Exception ignored) { }
     }
 
     static void refresh(Context ctx) {
