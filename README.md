@@ -10,7 +10,7 @@ Record a tap, long-press, or swipe with the floating **START** button, set a tri
 - Voice triggers (English)
 - Works over other apps and when the screen is locked
 - Lock-screen shortcuts: recorded on the lock screen (swipe + PIN taps), replayed from the lock screen
-- Offline gate: no internet = SayDo is fully off
+- Works fully offline (on-device English speech recognition)
 - Pure native Android (no WebView)
 
 ## Install

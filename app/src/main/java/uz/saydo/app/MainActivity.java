@@ -25,7 +25,7 @@ import org.json.JSONObject;
 /**
  * Toza bosh ekran: sarlavha, shortcutlar ro'yxati va bitta katta START/STOP tugmasi.
  * START bosilganda to'liq sozlanmagan bo'lsa kerakli sozlamaga o'tkazadi.
- * Internet yo'q bo'lsa katta "You're offline" ekrani chiqadi va hech narsa ishlamaydi.
+ * Hammasi internetsiz (offline) ishlaydi.
  */
 public class MainActivity extends AppCompatActivity implements MacroAdapter.Listener {
 
@@ -44,18 +44,10 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     private int lastStep = -1;
 
     private RecyclerView list;
-    private View empty, offline;
+    private View empty;
     private TextView hint, btnStart;
     private MacroAdapter adapter;
     private JSONArray macros = new JSONArray();
-
-    private final Net.Listener netListener = new Net.Listener() {
-        @Override public void onChanged(boolean online) {
-            if (destroyed) return;
-            refreshUi();
-            if (online) onResume2();
-        }
-    };
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -73,7 +65,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
         list = findViewById(R.id.list);
         empty = findViewById(R.id.empty);
-        offline = findViewById(R.id.offline);
         hint = findViewById(R.id.hint);
         btnStart = findViewById(R.id.btnStart);
 
@@ -109,7 +100,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     protected void onStart() {
         super.onStart();
         current = this;
-        Net.addListener(netListener);
     }
 
     @Override
@@ -123,7 +113,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     private void onResume2() {
-        if (destroyed || !Net.isOnline(this)) return;
+        if (destroyed) return;
         if (pendingStart) {
             continueStart();
             return;
@@ -148,7 +138,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     @Override
     protected void onStop() {
-        Net.removeListener(netListener);
         if (current == this) current = null;
         super.onStop();
     }
@@ -157,7 +146,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     protected void onDestroy() {
         destroyed = true;
         ui.removeCallbacksAndMessages(null);
-        Net.removeListener(netListener);
         if (current == this) current = null;
         super.onDestroy();
     }
@@ -183,10 +171,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
 
     private void refreshUi() {
         if (destroyed) return;
-        boolean online = Net.isOnline(this);
-        offline.setVisibility(online ? View.GONE : View.VISIBLE);
-        if (!online) return;
-
         boolean enabled = Store.isEnabled(this);
         boolean listening = VoiceService.running;
         btnStart.setText(enabled ? "STOP" : "START");
@@ -207,10 +191,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     // ------------------------------------------------------------------ start / stop
 
     private void onStartClicked() {
-        if (!Net.isOnline(this)) {
-            refreshUi();
-            return;
-        }
         if (Store.isEnabled(this)) {
             applyMaster(false);
             return;
@@ -286,7 +266,7 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
     }
 
     private void startListeningFlow() {
-        if (destroyed || !Store.isEnabled(this) || !Net.isOnline(this)) return;
+        if (destroyed || !Store.isEnabled(this)) return;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestMic();
             return;
@@ -340,7 +320,6 @@ public class MainActivity extends AppCompatActivity implements MacroAdapter.List
             if (r == Runner.NO_ACCESSIBILITY) Setup.route(this, Setup.NEED_ACCESSIBILITY);
             else if (r == Runner.INVALID) toast("Invalid shortcut");
             else if (r == Runner.LOCKED) toast("Unlock your phone first");
-            else if (r == Runner.OFFLINE) refreshUi();
         } catch (Exception e) {
             toast("Could not run");
         }

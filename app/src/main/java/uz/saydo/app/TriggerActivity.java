@@ -112,11 +112,6 @@ public class TriggerActivity extends Activity {
                     Toast.makeText(TriggerActivity.this, "Enter a phrase", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                if (!Net.isOnline(TriggerActivity.this)) {
-                    Toast.makeText(TriggerActivity.this, "You're offline", Toast.LENGTH_SHORT).show();
-                    finish();
-                    return;
-                }
                 // Qulf ekranida ham, ochiq telefonda ham darhol yozishga o'tadi.
                 // Qulf ekranida yozilsa, slide va parol kiritish ham yozib olinadi.
                 FloatService.startRecording(TriggerActivity.this, t);
