@@ -439,11 +439,31 @@ public class FloatService extends Service {
             Setup.route(this, miss);
             return;
         }
-        if (Setup.isLocked(this)) {
-            openTriggerActivity();
-            return;
+        // Always return to Home first when START is pressed
+        goHomeThenOpenTrigger();
+    }
+
+    private void goHomeThenOpenTrigger() {
+        final Runnable open = () -> {
+            if (bubble == null) return;
+            if (Setup.isLocked(this)) {
+                openTriggerActivity();
+            } else {
+                showTriggerPanel();
+            }
+        };
+        GestureService g = GestureService.instance;
+        if (g != null) {
+            g.goHomeThen(open);
+        } else {
+            try {
+                Intent home = new Intent(Intent.ACTION_MAIN)
+                        .addCategory(Intent.CATEGORY_HOME)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(home);
+            } catch (Throwable ignored) { }
+            h.postDelayed(open, 350);
         }
-        showTriggerPanel();
     }
 
     private void openTriggerActivity() {
