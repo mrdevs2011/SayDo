@@ -84,6 +84,20 @@ public class MainActivity extends AppCompatActivity implements
 
         btnStart.setOnClickListener(v -> onStartClicked());
 
+        View title = findViewById(R.id.titleSayDo);
+        if (title != null) {
+            title.setOnLongClickListener(v -> {
+                openDebug();
+                return true;
+            });
+        }
+        if (hint != null) {
+            hint.setOnLongClickListener(v -> {
+                openDebug();
+                return true;
+            });
+        }
+
         // Reactive subscriptions (Push updates instead of pull/polling)
         MacroRepository.getInstance(this).addListener(this);
         SettingsRepository.getInstance(this).addListener(this);
