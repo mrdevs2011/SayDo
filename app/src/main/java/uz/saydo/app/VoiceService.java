@@ -397,7 +397,17 @@ public class VoiceService extends Service implements
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
-        i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        // Online STT is more reliable when offline English pack is missing
+        // Prefer offline only if the device reports an offline recognizer.
+        boolean offlineOk = false;
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                offlineOk = SpeechRecognizer.isOnDeviceRecognitionAvailable(this);
+            }
+        } catch (Throwable ignored) {}
+        if (offlineOk) {
+            i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        }
 
         if (Build.VERSION.SDK_INT >= 33 && !cachedRawTriggers.isEmpty()) {
             i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, new ArrayList<>(cachedRawTriggers));

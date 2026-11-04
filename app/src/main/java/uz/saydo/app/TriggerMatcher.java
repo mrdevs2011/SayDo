@@ -76,7 +76,7 @@ public final class TriggerMatcher {
         alias("pause", "paws");
         alias("sun", "son");
         alias("app", "application");
-        alias("youtube", "yt", "u tube");
+        alias("youtube", "yt", "u tube", "you tube", "youtub", "utube", "you tobe", "yu tube");
         alias("wifi", "wi fi");
         alias("hello", "hi");
         alias("off", "of");
@@ -181,7 +181,11 @@ public final class TriggerMatcher {
 
         String cleaned = sb.toString().trim()
                 .replace("wi fi", "wifi")
-                .replace("u tube", "youtube");
+                .replace("u tube", "youtube")
+                .replace("you tube", "youtube")
+                .replace("yu tube", "youtube")
+                .replace("you tobe", "youtube")
+                .replace("utube", "youtube");
 
         String[] rawParts = cleaned.split("\\s+");
         StringBuilder all = new StringBuilder();
@@ -407,8 +411,9 @@ public final class TriggerMatcher {
 
         String hNo = heard.replace(" ", "");
         String tNo = trigger.replace(" ", "");
-        if (tNo.length() >= 4 && hNo.contains(tNo)) return 0.96;
-        if (tNo.length() < 3) return 0.0;
+        if (tNo.length() >= 3 && hNo.contains(tNo)) return 0.96;
+        if (hNo.equals(tNo)) return 1.0;
+        if (tNo.length() < 2) return 0.0;
 
         double best = Math.max(sim(heard, trigger), sim(hNo, tNo));
 
