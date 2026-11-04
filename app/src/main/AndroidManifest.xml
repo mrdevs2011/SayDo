@@ -48,7 +48,13 @@
         </activity>
 
         <activity
-            android:name=".TriggerActivity"
+            
+        <activity
+            android:name=".DebugActivity"
+            android:exported="false"
+            android:label="SayDo Debug"
+            android:theme="@style/AppTheme" />
+android:name=".TriggerActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleTop"

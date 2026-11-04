@@ -386,4 +386,12 @@ public class MainActivity extends AppCompatActivity implements
         if (destroyed || message == null) return;
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
+
+    private void openDebug() {
+        try {
+            startActivity(new Intent(this, DebugActivity.class));
+        } catch (Exception e) {
+            toast("Could not open debug");
+        }
+    }
 }
