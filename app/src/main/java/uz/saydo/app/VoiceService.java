@@ -1,5 +1,7 @@
 package uz.saydo.app;
 
+import uz.saydo.app.util.DebugLog;
+
 import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -163,6 +165,7 @@ public class VoiceService extends Service implements
         }
 
         running = true;
+        DebugLog.i("Voice", "service start masterOn triggers will load");
         destroyed = false;
         callPaused = false;
         acquireWakeLock();
@@ -375,6 +378,7 @@ public class VoiceService extends Service implements
         try {
             ensureOfflineModel();
             resetWatchdog(WATCHDOG_MS);
+            DebugLog.stt("startListening triggers=" + cachedTriggers.size() + " offlineOk check");
             recognizer.startListening(buildIntent());
             transitionTo(State.LISTENING);
             updateNotification("Listening · Speak your trigger");
@@ -437,7 +441,8 @@ public class VoiceService extends Service implements
                     }
                 }
                 @Override
-                public void onError(int error) {}
+                public void onError(int error) {
+            DebugLog.stt("onError code=" + error + " " + errorName(error));}
             });
         } catch (Throwable ignored) {
         }
@@ -486,6 +491,7 @@ public class VoiceService extends Service implements
 
         @Override
         public void onPartialResults(Bundle partialResults) {
+            DebugLog.stt("onPartialResults");
             resetWatchdog(8000);
             if (partialResults != null && state != State.EXECUTING_MACRO) {
                 ArrayList<String> heard = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
@@ -498,12 +504,18 @@ public class VoiceService extends Service implements
 
         @Override
         public void onResults(Bundle results) {
+            DebugLog.stt("onResults bundle=" + (results != null));
             cancelWatchdog();
             consecutiveErrors = 0;
             if (results != null && state != State.EXECUTING_MACRO) {
                 ArrayList<String> heard = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (heard != null && !heard.isEmpty()) {
                     String top = heard.get(0);
+                    DebugLog.stt("heard=" + top + " alts=" + heard);
+                    for (int ti = 0; ti < cachedTriggers.size(); ti++) {
+                        double sc = TriggerMatcher.score(TriggerMatcher.norm(top), cachedTriggers.get(ti));
+                        DebugLog.match("score[" + cachedTriggers.get(ti) + "]=" + String.format(java.util.Locale.US, "%.3f", sc));
+                    }
                     int idx = TriggerMatcher.best(heard, cachedTriggers, TriggerMatcher.FUZZY);
 
                     if (idx < 0) {
@@ -537,6 +549,7 @@ public class VoiceService extends Service implements
 
                     if (idx >= 0 && idx < cachedMacros.size()) {
                         Macro matched = cachedMacros.get(idx);
+                        DebugLog.match("MATCHED trigger=" + matched.trigger);
                         updateNotification("Running: " + matched.trigger);
                         fireMacro(matched);
                         return;
@@ -554,6 +567,7 @@ public class VoiceService extends Service implements
 
         @Override
         public void onError(int error) {
+            DebugLog.stt("onError code=" + error + " " + errorName(error));
             cancelWatchdog();
             if (destroyed || callPaused || state == State.EXECUTING_MACRO) return;
 
@@ -867,5 +881,22 @@ public class VoiceService extends Service implements
 
     private void toast(final String msg) {
         h.post(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show());
+    }
+
+    private static String errorName(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "NETWORK_TIMEOUT";
+            case SpeechRecognizer.ERROR_NETWORK: return "NETWORK";
+            case SpeechRecognizer.ERROR_AUDIO: return "AUDIO";
+            case SpeechRecognizer.ERROR_SERVER: return "SERVER";
+            case SpeechRecognizer.ERROR_CLIENT: return "CLIENT";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "SPEECH_TIMEOUT";
+            case SpeechRecognizer.ERROR_NO_MATCH: return "NO_MATCH";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "BUSY";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "NO_PERMISSION";
+            case 12: return "LANG_NOT_SUPPORTED";
+            case 13: return "LANG_UNAVAILABLE";
+            default: return "CODE_" + error;
+        }
     }
 }
