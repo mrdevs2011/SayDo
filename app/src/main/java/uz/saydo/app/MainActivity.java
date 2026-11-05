@@ -84,6 +84,11 @@ public class MainActivity extends AppCompatActivity implements
 
         btnStart.setOnClickListener(v -> onStartClicked());
 
+        View voiceGate = findViewById(R.id.btnVoiceGate);
+        if (voiceGate != null) {
+            voiceGate.setOnClickListener(v -> startActivity(new Intent(this, VoiceGateActivity.class)));
+        }
+
         View title = findViewById(R.id.titleSayDo);
         if (title != null) {
             title.setOnLongClickListener(v -> {

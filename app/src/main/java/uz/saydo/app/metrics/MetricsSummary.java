@@ -22,6 +22,8 @@ import java.util.Map;
  *   run_end      {run, ok, fails, first, ms, cancelled}
  *   verdict      {run, ok, broke}
  *   bench_voice  {exp, got, res (HIT|WRONG|MISS), lat}
+ *   gate_open    {mode (stream|restart), db}
+ *   gate_fallback{reason}
  */
 public final class MetricsSummary {
 
@@ -50,6 +52,13 @@ public final class MetricsSummary {
         public int falseOk;
         public final Map<Integer, Integer> brokeAtStep = new HashMap<>();
 
+        // Voice gate
+        public int gateOpens;
+        /** Gate openings followed by a matched trigger before the next opening. */
+        public int gateOpensMatched;
+        public int gateFallbacks;
+        public final Map<String, Integer> gateModes = new LinkedHashMap<>();
+
         // Voice benchmark
         public int benchTrials;
         public int benchHit;
@@ -62,6 +71,7 @@ public final class MetricsSummary {
     public static Result compute(List<JSONObject> events) {
         Result r = new Result();
         Map<Long, Boolean> reportedOk = new HashMap<>();
+        boolean gatePending = false;
         if (events == null) return r;
 
         for (JSONObject ev : events) {
@@ -79,8 +89,20 @@ public final class MetricsSummary {
                     }
                     long lat = ev.optLong("lat", -1);
                     if (matched && lat >= 0) r.matchLatencies.add(lat);
+                    if (matched && gatePending) {
+                        r.gateOpensMatched++;
+                        gatePending = false;
+                    }
                     break;
                 }
+                case "gate_open":
+                    r.gateOpens++;
+                    inc(r.gateModes, ev.optString("mode", "?"));
+                    gatePending = true;
+                    break;
+                case "gate_fallback":
+                    r.gateFallbacks++;
+                    break;
                 case "voice_error": {
                     String key = ev.optString("name", "") + "(" + ev.optInt("code", -1) + ")";
                     inc(r.errors, key);
@@ -169,6 +191,14 @@ public final class MetricsSummary {
           .append("  qisman natijadan ishga tushdi: ").append(r.matchedPartial).append('\n');
         sb.append("  kechikish (gap tugashidan): ").append(latency(r.matchLatencies)).append('\n');
         if (!r.errors.isEmpty()) sb.append("  xatolar: ").append(r.errors).append('\n');
+
+        if (r.gateOpens > 0 || r.gateFallbacks > 0) {
+            sb.append("\n[Ovoz darvozasi]\n");
+            sb.append("  ochildi: ").append(r.gateOpens).append(' ').append(r.gateModes)
+              .append("  trigger topildi: ").append(r.gateOpensMatched)
+              .append(" (").append(pct(r.gateOpensMatched, r.gateOpens)).append(")")
+              .append("  oddiy rejimga o'tdi: ").append(r.gateFallbacks).append('\n');
+        }
 
         sb.append("\n[Makro ijrosi — ilova hisobi]\n");
         sb.append("  ishga tushirildi: ").append(r.runs)

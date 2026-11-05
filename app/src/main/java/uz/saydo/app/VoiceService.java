@@ -1,5 +1,6 @@
 package uz.saydo.app;
 
+import uz.saydo.app.audio.VoiceGate;
 import uz.saydo.app.metrics.Metrics;
 import uz.saydo.app.metrics.VoiceBench;
 import uz.saydo.app.util.DebugLog;
@@ -16,7 +17,10 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
+import android.media.AudioFormat;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.os.Build;
@@ -24,6 +28,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.speech.RecognitionListener;
@@ -57,6 +62,9 @@ public class VoiceService extends Service implements
 
     private static final String TAG = "VoiceService";
     public static final String ACTION_STOP = "uz.saydo.app.STOP";
+    private static final long PAUSE_MAX_MS = 3 * 60 * 1000;
+    /** Stream-mode sessions that failed/heard nothing before falling back to restart mode. */
+    private static final int STREAM_FAIL_LIMIT = 4;
     private static final String CHANNEL_ID = "vf_listen";
     private static final int NOTIF_ID = 17;
 
@@ -65,6 +73,18 @@ public class VoiceService extends Service implements
     private static final long GUARD_INTERVAL_MS = 250;
 
     public static volatile boolean running = false;
+    private static volatile VoiceService sInstance;
+
+    /**
+     * Release the microphone while the voice-gate settings screen measures levels, and take
+     * it back afterwards. Same-process call (no startService, so it is safe from onStop).
+     * Auto-resumes after a few minutes in case resume never arrives.
+     */
+    public static void setPausedForSettings(boolean paused) {
+        final VoiceService s = sInstance;
+        if (s == null) return;
+        s.h.post(paused ? s::pauseListening : s::resumeListening);
+    }
 
     public enum State {
         STOPPED,
@@ -113,6 +133,16 @@ public class VoiceService extends Service implements
     private long speechEndAt = 0;
     private long pendingMatchLatency = -1;
 
+    // Voice gate (loudness-triggered listening)
+    private final VoiceGate gate = new VoiceGate();
+    private boolean gateSessionActive = false;
+    private boolean gateSessionStream = false;
+    private boolean gateSessionHeardSpeech = false;
+    private ParcelFileDescriptor gateReadPfd;
+    private int streamFailures = 0;
+    private boolean userPaused = false;
+    private final Runnable autoResume = this::resumeListening;
+
     // Macro Cache directly synced from MacroRepository
     private final List<Macro> cachedMacros = new CopyOnWriteArrayList<>();
     private final List<String> cachedTriggers = new CopyOnWriteArrayList<>();
@@ -130,6 +160,7 @@ public class VoiceService extends Service implements
         public void run() {
             if (destroyed || state == State.STOPPED || state == State.EXECUTING_MACRO) return;
             Log.w(TAG, "SpeechRecognizer watchdog triggered in state: " + state);
+            endGateSession();
             transitionTo(State.BACKOFF_RECOVERY);
             recreateRecognizerSafely();
             scheduleListen(GUARD_INTERVAL_MS);
@@ -139,6 +170,7 @@ public class VoiceService extends Service implements
     @Override
     public void onCreate() {
         super.onCreate();
+        sInstance = this;
         createNotificationChannel();
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         setupAudioFocus();
@@ -148,6 +180,11 @@ public class VoiceService extends Service implements
         MacroRepository.getInstance(this).addListener(this);
         SettingsRepository.getInstance(this).addListener(this);
         updateCachedMacros(MacroRepository.getInstance(this).getAll());
+
+        gate.setCallback(new VoiceGate.Callback() {
+            @Override public void onGateOpen(double db) { h.post(() -> onGateOpened(db)); }
+            @Override public void onGateLost() { h.post(VoiceService.this::onGateLostMain); }
+        });
     }
 
     @Override
@@ -217,11 +254,16 @@ public class VoiceService extends Service implements
 
     @Override
     public void onDestroy() {
+        if (sInstance == this) sInstance = null;
         destroyed = true;
         running = false;
         transitionTo(State.STOPPED);
 
         cancelWatchdog();
+        h.removeCallbacks(autoResume);
+        endGateSession();
+        gate.setCallback(null);
+        gate.stop();
         abandonAudioFocus();
         unregisterScreenReceiver();
         releaseWakeLock();
@@ -294,6 +336,27 @@ public class VoiceService extends Service implements
                 stopForeground(true);
                 stopSelf();
             }
+        } else if (SettingsRepository.KEY_GATE_DB.equals(key)) {
+            gate.setThreshold(SettingsRepository.getInstance(this).getGateDb());
+        } else if (SettingsRepository.KEY_GATE_ON.equals(key)
+                || SettingsRepository.KEY_GATE_STREAM_BAD.equals(key)) {
+            h.post(this::restartListeningMode);
+        }
+    }
+
+    /** Gate switched on/off: drop the current session and listen again in the new mode. */
+    private void restartListeningMode() {
+        if (destroyed || !running) return;
+        streamFailures = 0;
+        endGateSession();
+        gate.stop();
+        cancelWatchdog();
+        if (recognizer != null) {
+            try { recognizer.cancel(); } catch (Throwable ignored) {}
+        }
+        if (state != State.EXECUTING_MACRO) {
+            transitionTo(State.COOLDOWN);
+            scheduleListen(300);
         }
     }
 
@@ -354,21 +417,29 @@ public class VoiceService extends Service implements
     }
 
     private void startListeningInternal() {
-        if (destroyed || callPaused || state == State.EXECUTING_MACRO) return;
+        if (destroyed || callPaused || userPaused || state == State.EXECUTING_MACRO) return;
         if (!SettingsRepository.getInstance(this).isMasterOn()) {
             stopForeground(true);
             stopSelf();
             return;
         }
         if (FloatService.recording) {
+            gate.disarm();
             scheduleListen(600);
             return;
         }
         if (cachedTriggers.isEmpty()) {
+            gate.stop();
             updateNotification("No shortcuts — add one with START");
             scheduleListen(3000);
             return;
         }
+
+        if (isGateEnabled()) {
+            startGateIdle();
+            return;
+        }
+        if (gate.isRunning()) gate.stop();
 
         transitionTo(State.PREPARING);
 
@@ -478,6 +549,8 @@ public class VoiceService extends Service implements
 
         @Override
         public void onBeginningOfSpeech() {
+            gateSessionHeardSpeech = true;
+            if (gateSessionActive && gateSessionStream) markStreamWorks();
             speechBeginAt = SystemClock.uptimeMillis();
             speechEndAt = 0;
             if (state != State.EXECUTING_MACRO) {
@@ -517,6 +590,8 @@ public class VoiceService extends Service implements
         @Override
         public void onResults(Bundle results) {
             DebugLog.stt("onResults bundle=" + (results != null));
+            if (gateSessionActive && gateSessionStream) markStreamWorks();
+            endGateSession();
             cancelWatchdog();
             consecutiveErrors = 0;
             if (results != null && state != State.EXECUTING_MACRO) {
@@ -592,10 +667,14 @@ public class VoiceService extends Service implements
                     && (error != SpeechRecognizer.ERROR_NO_MATCH || speechBeginAt > 0)) {
                 Metrics.voiceError(error, errorName(error));
             }
+            boolean wasStream = gateSessionActive && gateSessionStream;
+            boolean heard = gateSessionHeardSpeech;
             speechBeginAt = 0;
             speechEndAt = 0;
+            endGateSession();
             cancelWatchdog();
-            if (destroyed || callPaused || state == State.EXECUTING_MACRO) return;
+            if (destroyed || callPaused || userPaused || state == State.EXECUTING_MACRO) return;
+            if (wasStream) noteStreamResult(error, heard);
 
             long delay = 120;
             switch (error) {
@@ -696,6 +775,7 @@ public class VoiceService extends Service implements
     /** Benchmark mode: score the match, do NOT run the macro, keep listening. */
     private void reportBenchMatch(VoiceBench bench, Macro m) {
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
+        endGateSession();
         cancelWatchdog();
         if (recognizer != null) {
             try { recognizer.cancel(); } catch (Throwable ignored) {}
@@ -708,6 +788,10 @@ public class VoiceService extends Service implements
     }
 
     private void queueUntilUnlock(Macro m) {
+        if (gateSessionActive && recognizer != null) {
+            try { recognizer.cancel(); } catch (Throwable ignored) {}
+        }
+        endGateSession();
         queuedMacro = m;
         queuedMacroExpiry = System.currentTimeMillis() + 45000;
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
@@ -724,6 +808,8 @@ public class VoiceService extends Service implements
         transitionTo(State.EXECUTING_MACRO);
         cancelWatchdog();
         h.removeCallbacks(listenRunnable);
+        endGateSession();
+        gate.disarm();
 
         if (recognizer != null) {
             try { recognizer.cancel(); } catch (Throwable ignored) {}
@@ -756,6 +842,195 @@ public class VoiceService extends Service implements
         }
     }
 
+    // ------------------------------------------------------------- Voice Gate
+
+    private boolean isGateEnabled() {
+        if (!SettingsRepository.getInstance(this).isGateOn()) return false;
+        return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean useStreamMode() {
+        return Build.VERSION.SDK_INT >= 33 && !SettingsRepository.getInstance(this).isGateStreamBad();
+    }
+
+    /** Mic open, recognizer idle: wait until the level goes over the threshold. */
+    private void startGateIdle() {
+        if (gateSessionActive) return; // a recognition session is running; it ends itself
+        cancelWatchdog();
+        if (recognizer == null) recreateRecognizerSafely();
+        if (!gate.isRunning() && !gate.start()) {
+            consecutiveErrors++;
+            transitionTo(State.BACKOFF_RECOVERY);
+            updateNotification("Microphone busy · retrying");
+            DebugLog.w("Gate", "mic open failed, retry #" + consecutiveErrors);
+            scheduleListen(Math.min(1000L * consecutiveErrors, 10000L));
+            return;
+        }
+        gate.arm(SettingsRepository.getInstance(this).getGateDb());
+        transitionTo(State.LISTENING);
+        updateNotification("Waiting for a loud voice · say your trigger");
+    }
+
+    /** Main thread: the level crossed the threshold — start one recognition session. */
+    private void onGateOpened(double db) {
+        if (destroyed || userPaused || callPaused || gateSessionActive
+                || state != State.LISTENING || !isGateEnabled() || FloatService.recording) {
+            if (!destroyed && !gateSessionActive) scheduleListen(300);
+            return;
+        }
+        if (recognizer == null) recreateRecognizerSafely();
+        if (recognizer == null) {
+            consecutiveErrors++;
+            transitionTo(State.BACKOFF_RECOVERY);
+            scheduleListen(1000);
+            return;
+        }
+
+        final boolean stream = useStreamMode();
+        gateSessionActive = true;
+        gateSessionStream = stream;
+        gateSessionHeardSpeech = false;
+        speechBeginAt = 0;
+        speechEndAt = 0;
+        Metrics.gateOpen(stream ? "stream" : "restart", db);
+        DebugLog.stt(String.format(Locale.US, "gate open %.1f dB mode=%s", db, stream ? "stream" : "restart"));
+        transitionTo(State.PREPARING);
+        updateNotification("Listening…");
+
+        try {
+            ensureOfflineModel();
+            Intent i = buildIntent();
+            if (stream) {
+                ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+                gateReadPfd = pipe[0];
+                gate.startStreaming(new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]));
+                i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0]);
+                i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1);
+                i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
+                i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, VoiceGate.SAMPLE_RATE);
+            } else {
+                // Restart mode: the recognizer opens the mic itself, so ours must be released.
+                gate.stop();
+            }
+            resetWatchdog(WATCHDOG_MS);
+            recognizer.startListening(i);
+        } catch (Throwable e) {
+            Log.w(TAG, "gate session start failed", e);
+            DebugLog.e("Gate", "session start failed: " + e);
+            if (stream) noteStreamFailure("start_" + e.getClass().getSimpleName(), 2);
+            endGateSession();
+            cancelWatchdog();
+            consecutiveErrors++;
+            transitionTo(State.BACKOFF_RECOVERY);
+            recreateRecognizerSafely();
+            scheduleListen(Math.min(300L * consecutiveErrors, 3000L));
+        }
+    }
+
+    /** Main thread: the capture thread died while it should be running (mic taken). */
+    private void onGateLostMain() {
+        if (destroyed || userPaused || callPaused) return;
+        DebugLog.w("Gate", "microphone lost");
+        if (gateSessionActive) {
+            if (recognizer != null) {
+                try { recognizer.cancel(); } catch (Throwable ignored) {}
+            }
+            endGateSession();
+        }
+        if (state == State.EXECUTING_MACRO) return;
+        consecutiveErrors++;
+        transitionTo(State.BACKOFF_RECOVERY);
+        scheduleListen(Math.min(1000L * consecutiveErrors, 10000L));
+    }
+
+    /** Close the stream to the recognizer (if any) and mark the session finished. */
+    private void endGateSession() {
+        gateSessionActive = false;
+        gate.stopStreaming();
+        ParcelFileDescriptor pfd = gateReadPfd;
+        gateReadPfd = null;
+        if (pfd != null) {
+            try { pfd.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    /**
+     * Some recognizers ignore or reject EXTRA_AUDIO_SOURCE. If stream sessions keep failing
+     * without ever hearing speech, remember it and use restart mode on this phone.
+     */
+    private void markStreamWorks() {
+        streamFailures = 0;
+        SettingsRepository.getInstance(this).setGateStreamOk();
+    }
+
+    private void noteStreamResult(int error, boolean heardSpeech) {
+        if (heardSpeech) {
+            markStreamWorks();
+            return;
+        }
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO:
+            case SpeechRecognizer.ERROR_CLIENT:
+            case 11: // ERROR_SERVER_DISCONNECTED
+            case 12: // ERROR_LANGUAGE_NOT_SUPPORTED
+            case 13: // ERROR_LANGUAGE_UNAVAILABLE
+                noteStreamFailure("error_" + errorName(error), 2);
+                break;
+            case SpeechRecognizer.ERROR_NO_MATCH:
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                // A loud non-speech sound (door, clap) also ends silent. Once stream mode has
+                // worked on this phone, silence is not evidence that the stream is ignored.
+                if (!SettingsRepository.getInstance(this).isGateStreamOk()) {
+                    noteStreamFailure("silent_" + errorName(error), 1);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void noteStreamFailure(String reason, int weight) {
+        streamFailures += weight;
+        DebugLog.w("Gate", "stream failure " + reason + " total=" + streamFailures);
+        if (streamFailures >= STREAM_FAIL_LIMIT && useStreamMode()) {
+            Metrics.gateFallback(reason);
+            DebugLog.w("Gate", "stream mode not supported here -> restart mode");
+            streamFailures = 0;
+            SettingsRepository.getInstance(this).setGateStreamBad(true);
+        }
+    }
+
+    // ------------------------------------------------------------- Pause (calibration)
+
+    private void pauseListening() {
+        if (userPaused) {
+            h.removeCallbacks(autoResume);
+            h.postDelayed(autoResume, PAUSE_MAX_MS);
+            return;
+        }
+        userPaused = true;
+        h.removeCallbacks(listenRunnable);
+        cancelWatchdog();
+        endGateSession();
+        gate.stop();
+        if (recognizer != null) {
+            try { recognizer.cancel(); } catch (Throwable ignored) {}
+        }
+        if (state != State.EXECUTING_MACRO) transitionTo(State.COOLDOWN);
+        updateNotification("Paused · adjusting voice settings");
+        // Safety net: never stay deaf if the settings screen is killed without resuming.
+        h.removeCallbacks(autoResume);
+        h.postDelayed(autoResume, PAUSE_MAX_MS);
+    }
+
+    private void resumeListening() {
+        h.removeCallbacks(autoResume);
+        if (!userPaused) return;
+        userPaused = false;
+        consecutiveErrors = 0;
+        if (state != State.EXECUTING_MACRO) scheduleListen(300);
+    }
+
     // ------------------------------------------------------------- Audio Focus Handling
 
     private void setupAudioFocus() {
@@ -785,6 +1060,8 @@ public class VoiceService extends Service implements
             // Incoming phone call or media takeover -> pause gracefully
             callPaused = true;
             cancelWatchdog();
+            endGateSession();
+            gate.stop();
             if (recognizer != null) {
                 try { recognizer.cancel(); } catch (Throwable ignored) {}
             }
