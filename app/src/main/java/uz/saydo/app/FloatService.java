@@ -659,6 +659,12 @@ public class FloatService extends Service {
             }
 
             if (GestureService.instance != null && !"global".equals(curStroke.optString("type", "tap"))) {
+                // Closed-loop playback: remember which app this touch was made in.
+                try {
+                    String screenPkg = GestureService.screenPackageForRecording();
+                    if (screenPkg != null) curStroke.put("pkg", screenPkg);
+                } catch (Throwable ignored) {
+                }
                 try {
                     android.view.accessibility.AccessibilityNodeInfo root = GestureService.instance.getRootInActiveWindow();
                     if (root != null) {

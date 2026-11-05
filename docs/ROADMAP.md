@@ -48,6 +48,15 @@ Foydalanuvchi so'rovi bilan Bosqich 3 dan oldin qo'shildi. Baseline o'lchovini b
 
 ## Bosqich 2 — Closed-loop ijro (2–3 hafta) ← eng yuqori ustuvorlik
 
+**2.11.0 da qisman bajarildi (qurilmada hali o'lchanmagan):**
+- [x] Yozishda har harakat uchun ilova paketi (`pkg`) saqlanadi (klaviatura, bildirishnoma paneli, qulf ekrani hisobga olinmaydi).
+- [x] Ijroda: yozilgan pauzadan keyin kutilgan ilova oldinda bo'lguncha 8 s gacha kutadi; chiqmasa **to'xtaydi** va "N-qadamda to'xtadi" deydi.
+- [x] Anchor (tugma) ko'rinishini 2.5 s gacha kutadi, keyin koordinataga qaytadi.
+- [x] Bekor qilingan harakat 1 marta qayta urinadi, keyin to'xtaydi (oldin jim davom etardi).
+- [x] "OK" faqat birorta ham xato bo'lmasa.
+- [ ] Eski makrolarda `pkg` yo'q — ular eskicha (vaqt bo'yicha) ishlaydi; qayta yozish kerak.
+- [ ] Bir ilova ichidagi ekranlarni farqlash (activity / ekran matnlari) — keyingi qadam.
+
 Foydalanuvchi shikoyati: 40–50 qadamlik makroda bitta xato hammasini buzadi.
 
 **2.1 Ma'lumot modeli.** Har `Gesture` ga "kutilgan holat" qo'shiladi:
@@ -67,7 +76,7 @@ Foydalanuvchi shikoyati: 40–50 qadamlik makroda bitta xato hammasini buzadi.
 
 **2.4 Xatolar tuzatish:**
 - [ ] `finish(...)` muvaffaqiyat mezoni: `failures == 0` va oxirgi ekran mos.
-- [ ] Anchor topgan koordinatani **saqlama** (faqat shu ijroda ishlat).
+- [x] ~~Anchor koordinatasini saqlamaslik~~ — tekshirildi: `parse()` har ijroda yangi obyekt yaratadi, o'zgarish saqlanmaydi (avvalgi baho noto'g'ri edi).
 - [ ] `onCancelled` da jim davom etishni olib tashla.
 - [ ] Vaqt siljishini yig'ma emas, mutlaq vaqtga tenglash.
 

@@ -36,6 +36,8 @@ public final class Gesture implements Serializable {
     public final NodeAnchor anchor;
     public final String variableSlot;
     public final String textToInject;
+    /** App package the touch was recorded in ("" = unknown; playback is then time-based). */
+    public final String screenPkg;
 
     public Gesture(String type, String action, double x, double y,
                    long startTime, long endTime, long duration, List<TouchPoint> points) {
@@ -45,6 +47,13 @@ public final class Gesture implements Serializable {
     public Gesture(String type, String action, double x, double y,
                    long startTime, long endTime, long duration, List<TouchPoint> points,
                    NodeAnchor anchor, String variableSlot, String textToInject) {
+        this(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, textToInject, "");
+    }
+
+    public Gesture(String type, String action, double x, double y,
+                   long startTime, long endTime, long duration, List<TouchPoint> points,
+                   NodeAnchor anchor, String variableSlot, String textToInject, String screenPkg) {
+        this.screenPkg = screenPkg != null ? screenPkg.trim() : "";
         this.type = (type != null && !type.trim().isEmpty()) ? type.trim().toLowerCase() : TYPE_TAP;
         this.action = (action != null) ? action.trim().toLowerCase() : "";
         if (Double.isNaN(x) || Double.isInfinite(x)) x = 0.5;
@@ -113,15 +122,15 @@ public final class Gesture implements Serializable {
     }
 
     public Gesture withAnchor(NodeAnchor newAnchor) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, newAnchor, variableSlot, textToInject);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, newAnchor, variableSlot, textToInject, screenPkg);
     }
 
     public Gesture withVariableSlot(String slot) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, slot, textToInject);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, slot, textToInject, screenPkg);
     }
 
     public Gesture withText(String text) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, text);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, text, screenPkg);
     }
 
     public JSONObject toJson() {
@@ -152,6 +161,9 @@ public final class Gesture implements Serializable {
             }
             if (!textToInject.isEmpty()) {
                 obj.put("txt", textToInject);
+            }
+            if (!screenPkg.isEmpty()) {
+                obj.put("pkg", screenPkg);
             }
         } catch (JSONException ignored) {
         }
@@ -189,8 +201,9 @@ public final class Gesture implements Serializable {
 
         String varSlot = obj.optString("var", "");
         String txt = obj.optString("txt", "");
+        String pkg = obj.optString("pkg", "");
 
-        return new Gesture(type, action, x, y, st, et, dur, pointsList, anchor, varSlot, txt);
+        return new Gesture(type, action, x, y, st, et, dur, pointsList, anchor, varSlot, txt, pkg);
     }
 
     @Override

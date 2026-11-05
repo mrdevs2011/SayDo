@@ -189,7 +189,7 @@ public final class MacroStudioActivity extends Activity {
         long newDur = Math.max(20, old.duration + delta);
         Gesture updated = new Gesture(old.type, old.action, old.x, old.y,
                 old.startTime, old.startTime + newDur, newDur, old.points,
-                old.anchor, old.variableSlot, old.textToInject);
+                old.anchor, old.variableSlot, old.textToInject, old.screenPkg);
         editableGestures.set(index, updated);
         renderTimelineSteps();
     }
