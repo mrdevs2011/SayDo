@@ -37,6 +37,29 @@ public class TriggerMatcherTest {
         assertEquals(TriggerMatcher.norm("open app"), TriggerMatcher.norm("open application"));
     }
 
+    // Regression: "utube" was replaced inside "youtube" -> "yoyoutube", so "yt" stopped matching.
+    @Test public void norm_youtubeIsNotMangled() {
+        assertEquals("open youtube", TriggerMatcher.norm("open youtube"));
+        assertEquals("open youtube", TriggerMatcher.norm("open utube"));
+        assertEquals("open youtube", TriggerMatcher.norm("open you tube"));
+        assertEquals("youtube youtube", TriggerMatcher.norm("you tube u tube"));
+        assertEquals("wifi wifi", TriggerMatcher.norm("wi fi wi fi"));
+        assertEquals("youtuber", TriggerMatcher.norm("youtuber")); // only whole words are joined
+    }
+
+    @Test public void matches_spokenVariantsOfYoutubeTrigger() {
+        assertTrue(TriggerMatcher.matches("open yt", "open youtube"));
+        assertTrue(TriggerMatcher.matches("open you tube", "open youtube"));
+        assertTrue(TriggerMatcher.matches("OPEN YOUTUBE", "open youtube"));
+        assertTrue(TriggerMatcher.matches("open youtube", "open yt"));
+    }
+
+    @Test public void score_twoLetterTriggerStillMatchesAsWord() {
+        assertEquals(0.97, TriggerMatcher.score("turn on tv", "tv"), 1e-9);
+        assertEquals(1.0, TriggerMatcher.score("tv", "tv"), 1e-9);
+        assertEquals(0.0, TriggerMatcher.score("to", "tv"), 1e-9);
+    }
+
     @Test public void norm_dropsFillerWords() {
         assertEquals("open camera", TriggerMatcher.norm("Please open the camera"));
     }
