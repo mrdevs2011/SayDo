@@ -49,6 +49,7 @@ public class SayDoApp extends Application implements ComponentCallbacks2 {
 
         installCrashHandler();
         setupStrictMode();
+        uz.saydo.app.metrics.Metrics.init(this);
         uz.saydo.app.kernel.SayDoKernel.init(this);
     }
 

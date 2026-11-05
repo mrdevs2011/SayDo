@@ -37,6 +37,7 @@ import uz.saydo.app.data.TouchPoint;
 import uz.saydo.app.kernel.data.NodeAnchor;
 import uz.saydo.app.kernel.gesture.SmartGestureDispatcher;
 import uz.saydo.app.kernel.ui.ExecutionHudOverlay;
+import uz.saydo.app.metrics.Metrics;
 import uz.saydo.app.util.GestureResampler;
 
 /**
@@ -73,6 +74,12 @@ public class GestureService extends AccessibilityService {
     private volatile boolean running = false;
     private Done current;
     private ExecutionHudOverlay hud;
+
+    // Metrics for the current run (measurement only — does not change playback)
+    private long runId = 0;
+    private long runStartedAt = 0;
+    private int firstFail = -1;
+    private int runFailures = 0;
     private String currentMacroName = "Macro";
 
     @Override
@@ -229,6 +236,10 @@ public class GestureService extends AccessibilityService {
 
     void cancel() {
         token++;
+        if (running) {
+            Metrics.runEnd(runId, false, runFailures, firstFail,
+                    SystemClock.uptimeMillis() - runStartedAt, true);
+        }
         running = false;
         handler.removeCallbacksAndMessages(null);
         if (hud != null) hud.dismiss();
@@ -256,6 +267,10 @@ public class GestureService extends AccessibilityService {
         current = done;
         running = true;
         currentMacroName = (macro != null) ? macro.optString("trigger", "Macro") : "Macro";
+        runId = Metrics.runStart(macro != null ? macro.optString("id", "") : "", currentMacroName, list.size());
+        runStartedAt = SystemClock.uptimeMillis();
+        firstFail = -1;
+        runFailures = 0;
         if (hud != null) hud.show(currentMacroName, 1, list.size());
         step(list, 0, tok, 0);
         return true;
@@ -279,8 +294,9 @@ public class GestureService extends AccessibilityService {
         }
     }
 
-    private void finish(int tok, boolean ok) {
+    private void finish(int tok, boolean ok, int failures) {
         if (tok != token) return;
+        Metrics.runEnd(runId, ok, failures, firstFail, SystemClock.uptimeMillis() - runStartedAt, false);
         running = false;
         if (hud != null) hud.dismiss();
         Done d = current;
@@ -291,7 +307,7 @@ public class GestureService extends AccessibilityService {
     private void step(final List<G> list, final int i, final int tok, final int failures) {
         if (tok != token) return;
         if (i >= list.size()) {
-            finish(tok, failures < list.size());
+            finish(tok, failures < list.size(), failures);
             return;
         }
         final G g = list.get(i);
@@ -307,6 +323,7 @@ public class GestureService extends AccessibilityService {
                             : "recents".equals(g.action) ? GLOBAL_ACTION_RECENTS
                             : GLOBAL_ACTION_BACK;
                     final boolean okGlobal = performGlobalAction(act);
+                    if (!okGlobal) recordFail(i, "global_" + g.action);
                     handler.postDelayed(() -> step(list, i + 1, tok, okGlobal ? failures : failures + 1), 250);
                     return;
                 }
@@ -345,6 +362,7 @@ public class GestureService extends AccessibilityService {
                 try {
                     gd = build(g);
                 } catch (Throwable e) {
+                    recordFail(i, "build_error");
                     step(list, i + 1, tok, failures + 1);
                     return;
                 }
@@ -357,15 +375,23 @@ public class GestureService extends AccessibilityService {
 
                     @Override
                     public void onCancelled(GestureDescription description) {
+                        recordFail(i, "cancelled");
                         step(list, i + 1, tok, failures + 1);
                     }
                 }, null);
 
                 if (!accepted) {
+                    recordFail(i, "not_accepted");
                     step(list, i + 1, tok, failures + 1);
                 }
             }
         }, gap);
+    }
+
+    private void recordFail(int stepIndex, String reason) {
+        if (firstFail < 0) firstFail = stepIndex;
+        runFailures++;
+        Metrics.runFail(runId, stepIndex, reason);
     }
 
     // ---------------------------------------------------------------- Gesture Construction

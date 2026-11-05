@@ -54,6 +54,13 @@
             android:theme="@style/AppTheme" />
 
         <activity
+            android:name=".BenchmarkActivity"
+            android:exported="false"
+            android:label="SayDo Benchmark"
+            android:launchMode="singleTop"
+            android:theme="@style/AppTheme" />
+
+        <activity
             android:name=".TriggerActivity"
             android:exported="false"
             android:excludeFromRecents="true"

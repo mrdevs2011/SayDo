@@ -1,5 +1,7 @@
 package uz.saydo.app;
 
+import uz.saydo.app.metrics.Metrics;
+import uz.saydo.app.metrics.VoiceBench;
 import uz.saydo.app.util.DebugLog;
 
 import android.app.AlarmManager;
@@ -105,6 +107,11 @@ public class VoiceService extends Service implements
     private long cooldownUntil = 0;
     private boolean callPaused = false;
     private boolean modelDownloadChecked = false;
+
+    // Metrics: speech timing for the current recognizer session
+    private long speechBeginAt = 0;
+    private long speechEndAt = 0;
+    private long pendingMatchLatency = -1;
 
     // Macro Cache directly synced from MacroRepository
     private final List<Macro> cachedMacros = new CopyOnWriteArrayList<>();
@@ -378,6 +385,8 @@ public class VoiceService extends Service implements
         try {
             ensureOfflineModel();
             resetWatchdog(WATCHDOG_MS);
+            speechBeginAt = 0;
+            speechEndAt = 0;
             DebugLog.stt("startListening triggers=" + cachedTriggers.size() + " offlineOk check");
             recognizer.startListening(buildIntent());
             transitionTo(State.LISTENING);
@@ -469,6 +478,8 @@ public class VoiceService extends Service implements
 
         @Override
         public void onBeginningOfSpeech() {
+            speechBeginAt = SystemClock.uptimeMillis();
+            speechEndAt = 0;
             if (state != State.EXECUTING_MACRO) {
                 transitionTo(State.PROCESSING);
                 resetWatchdog(10000);
@@ -481,6 +492,7 @@ public class VoiceService extends Service implements
 
         @Override
         public void onEndOfSpeech() {
+            speechEndAt = SystemClock.uptimeMillis();
             if (state != State.EXECUTING_MACRO) {
                 transitionTo(State.PROCESSING);
                 updateNotification("Processing speech…");
@@ -512,6 +524,9 @@ public class VoiceService extends Service implements
                 if (heard != null && !heard.isEmpty()) {
                     String top = heard.get(0);
                     DebugLog.stt("heard=" + top + " alts=" + heard);
+                    long lat = speechEndAt > 0 ? SystemClock.uptimeMillis() - speechEndAt : -1;
+                    VoiceBench vb = VoiceBench.active();
+                    if (vb != null) vb.onHeard(top);
                     for (int ti = 0; ti < cachedTriggers.size(); ti++) {
                         double sc = TriggerMatcher.score(TriggerMatcher.norm(top), cachedTriggers.get(ti));
                         DebugLog.match("score[" + cachedTriggers.get(ti) + "]=" + String.format(java.util.Locale.US, "%.3f", sc));
@@ -550,10 +565,13 @@ public class VoiceService extends Service implements
                     if (idx >= 0 && idx < cachedMacros.size()) {
                         Macro matched = cachedMacros.get(idx);
                         DebugLog.match("MATCHED trigger=" + matched.trigger);
+                        Metrics.voiceHeard(top, matched.trigger, false, lat);
+                        pendingMatchLatency = lat;
                         updateNotification("Running: " + matched.trigger);
                         fireMacro(matched);
                         return;
                     } else {
+                        Metrics.voiceHeard(top, "", false, lat);
                         updateNotification("Heard: \"" + top + "\" (no match)");
                         transitionTo(State.COOLDOWN);
                         scheduleListen(400);
@@ -568,6 +586,14 @@ public class VoiceService extends Service implements
         @Override
         public void onError(int error) {
             DebugLog.stt("onError code=" + error + " " + errorName(error));
+            // SPEECH_TIMEOUT fires every few seconds of silence — not worth logging.
+            // NO_MATCH only matters if the user actually spoke in this session.
+            if (error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                    && (error != SpeechRecognizer.ERROR_NO_MATCH || speechBeginAt > 0)) {
+                Metrics.voiceError(error, errorName(error));
+            }
+            speechBeginAt = 0;
+            speechEndAt = 0;
             cancelWatchdog();
             if (destroyed || callPaused || state == State.EXECUTING_MACRO) return;
 
@@ -641,6 +667,10 @@ public class VoiceService extends Service implements
             return false;
         }
 
+        // Partial results fire before end of speech, so STT latency is unknown here.
+        Metrics.voiceHeard(heard.get(0), cachedMacros.get(idx).trigger, partial, -1);
+        pendingMatchLatency = -1;
+
         fireMacro(cachedMacros.get(idx));
         return true;
     }
@@ -650,11 +680,31 @@ public class VoiceService extends Service implements
     private void fireMacro(Macro m) {
         if (state == State.EXECUTING_MACRO || destroyed || m == null) return;
 
+        VoiceBench bench = VoiceBench.active();
+        if (bench != null) {
+            reportBenchMatch(bench, m);
+            return;
+        }
+
         if (Setup.isLocked(this) && !m.locked) {
             queueUntilUnlock(m);
             return;
         }
         executeMacro(m);
+    }
+
+    /** Benchmark mode: score the match, do NOT run the macro, keep listening. */
+    private void reportBenchMatch(VoiceBench bench, Macro m) {
+        cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS;
+        cancelWatchdog();
+        if (recognizer != null) {
+            try { recognizer.cancel(); } catch (Throwable ignored) {}
+        }
+        bench.onMatch(m.trigger, pendingMatchLatency);
+        pendingMatchLatency = -1;
+        updateNotification("Benchmark: " + m.trigger);
+        transitionTo(State.COOLDOWN);
+        scheduleListen(300);
     }
 
     private void queueUntilUnlock(Macro m) {
@@ -680,6 +730,7 @@ public class VoiceService extends Service implements
         }
 
         updateNotification("Running: " + name);
+        Metrics.nextRunSource = "voice";
         int result = Runner.run(this, m, new GestureService.Done() {
             @Override
             public void onDone(boolean completed) {
