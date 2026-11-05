@@ -20,6 +20,18 @@ public final class SettingsRepository {
     public static final String KEY_LANG = "lang";
     public static final String DEFAULT_LANG = "en-US";
 
+    /** Voice gate: start speech recognition only after a sound louder than the threshold. */
+    public static final String KEY_GATE_ON = "gate_on";
+    /** Gate threshold in dBFS (per-device, set by calibration or slider). */
+    public static final String KEY_GATE_DB = "gate_db";
+    public static final String KEY_GATE_NOISE_DB = "gate_noise_db";
+    public static final String KEY_GATE_SPEECH_DB = "gate_speech_db";
+    public static final float DEFAULT_GATE_DB = -28f;
+    /** Set when this phone's recognizer did not accept our audio stream (Android 13+ mode). */
+    public static final String KEY_GATE_STREAM_BAD = "gate_stream_bad";
+    /** Set once a stream-mode session heard speech on this phone (stream mode proven to work). */
+    public static final String KEY_GATE_STREAM_OK = "gate_stream_ok";
+
     private static volatile SettingsRepository sInstance;
     private final SharedPreferences prefs;
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
@@ -119,5 +131,66 @@ public final class SettingsRepository {
 
     public String getLanguage() {
         return DEFAULT_LANG;
+    }
+
+    // ------------------------------------------------------------------ voice gate
+
+    public boolean isGateOn() {
+        return prefs.getBoolean(KEY_GATE_ON, false);
+    }
+
+    public void setGateOn(boolean on) {
+        if (isGateOn() != on) {
+            prefs.edit().putBoolean(KEY_GATE_ON, on).apply();
+            notifyChanged(KEY_GATE_ON);
+        }
+    }
+
+    public float getGateDb() {
+        return prefs.getFloat(KEY_GATE_DB, DEFAULT_GATE_DB);
+    }
+
+    public void setGateDb(float db) {
+        if (Float.compare(getGateDb(), db) != 0) {
+            prefs.edit().putFloat(KEY_GATE_DB, db).apply();
+            notifyChanged(KEY_GATE_DB);
+        }
+    }
+
+    /** NaN when not calibrated. */
+    public float getGateNoiseDb() {
+        return prefs.getFloat(KEY_GATE_NOISE_DB, Float.NaN);
+    }
+
+    /** NaN when not calibrated. */
+    public float getGateSpeechDb() {
+        return prefs.getFloat(KEY_GATE_SPEECH_DB, Float.NaN);
+    }
+
+    public boolean isGateStreamBad() {
+        return prefs.getBoolean(KEY_GATE_STREAM_BAD, false);
+    }
+
+    public void setGateStreamBad(boolean bad) {
+        if (isGateStreamBad() != bad) {
+            prefs.edit().putBoolean(KEY_GATE_STREAM_BAD, bad).apply();
+            notifyChanged(KEY_GATE_STREAM_BAD);
+        }
+    }
+
+    public boolean isGateStreamOk() {
+        return prefs.getBoolean(KEY_GATE_STREAM_OK, false);
+    }
+
+    public void setGateStreamOk() {
+        if (!isGateStreamOk()) prefs.edit().putBoolean(KEY_GATE_STREAM_OK, true).apply();
+    }
+
+    public void setGateCalibration(float noiseDb, float speechDb) {
+        prefs.edit()
+                .putFloat(KEY_GATE_NOISE_DB, noiseDb)
+                .putFloat(KEY_GATE_SPEECH_DB, speechDb)
+                .apply();
+        notifyChanged(KEY_GATE_NOISE_DB);
     }
 }

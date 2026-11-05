@@ -79,6 +79,24 @@ public class MetricsTest {
     }
 
     @Test
+    public void gateOpensCountMatchesUntilNextOpening() throws Exception {
+        List<JSONObject> events = Arrays.asList(
+                ev("{e:'gate_open', mode:'stream', db:-20}"),
+                ev("{e:'voice_heard', text:'x', trig:'open youtube', partial:false, lat:300}"),
+                ev("{e:'voice_heard', text:'y', trig:'open youtube', partial:false, lat:300}"), // same opening, not double counted
+                ev("{e:'gate_open', mode:'stream', db:-18}"),                                    // door slam, nothing heard
+                ev("{e:'gate_open', mode:'restart', db:-15}"),
+                ev("{e:'voice_heard', text:'z', trig:'', partial:false, lat:300}"),
+                ev("{e:'gate_fallback', reason:'silent_NO_MATCH'}"));
+        MetricsSummary.Result r = MetricsSummary.compute(events);
+        assertEquals(3, r.gateOpens);
+        assertEquals(1, r.gateOpensMatched);
+        assertEquals(1, r.gateFallbacks);
+        assertEquals(Integer.valueOf(2), r.gateModes.get("stream"));
+        assertTrue(MetricsSummary.format(r, null).contains("Ovoz darvozasi"));
+    }
+
+    @Test
     public void emptyLogFormatsWithoutCrash() {
         String text = MetricsSummary.format(MetricsSummary.compute(new ArrayList<>()), null);
         assertTrue(text.contains("hali o'tkazilmagan"));

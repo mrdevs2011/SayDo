@@ -54,6 +54,13 @@
             android:theme="@style/AppTheme" />
 
         <activity
+            android:name=".VoiceGateActivity"
+            android:exported="false"
+            android:label="Ovoz darvozasi"
+            android:screenOrientation="portrait"
+            android:theme="@style/AppTheme" />
+
+        <activity
             android:name=".BenchmarkActivity"
             android:exported="false"
             android:label="SayDo Benchmark"

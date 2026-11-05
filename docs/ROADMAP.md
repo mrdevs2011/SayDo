@@ -33,6 +33,19 @@ Qoida: *ishonchlilik funksiyadan muhimroq.* Yangi funksiya yo'q, avval mavjudi 9
 
 **Tayyor mezoni:** boshlang'ich raqamlar jadvali (BENCHMARK.md) 2.9.4 uchun to'ldirilgan.
 
+## Qo'shimcha (2.10.0): Ovoz darvozasi
+
+Foydalanuvchi so'rovi bilan Bosqich 3 dan oldin qo'shildi. Baseline o'lchovini buzmaslik uchun **standart holatda o'chiq**.
+
+- [x] `audio/VoiceGate`: o'z `AudioRecord` (16 kHz), har 20 ms dBFS, 1.2 s pre-roll, 60 ms ketma-ket baland ovozda ochiladi.
+- [x] Android 13+: pre-roll + jonli ovoz `EXTRA_AUDIO_SOURCE` orqali recognizer'ga beriladi (triggerning boshi saqlanadi).
+- [x] Recognizer oqimni qabul qilmasa, avtomatik "restart" rejimga o'tadi va buni eslab qoladi (sozlamadan qayta sinash mumkin).
+- [x] Android 12 va past: restart rejim (mikrofon bo'shatiladi, recognizer ishga tushadi, triggerning boshi yo'qolishi mumkin).
+- [x] Kalibrlash ekrani (asosiy ekran → **Ovoz ⚙**): jonli o'lchagich, 2 bosqichli kalibrlash, chegara slayderi, "ochildi" chirog'i.
+- [x] Metrikalar: `gate_open` (rejim, dB), `gate_fallback`; hisobotda "darvoza ochildi → trigger topildi %".
+- [ ] Qurilmada o'lchash: Benchmark ovoz testini darvoza **o'chiq** va **yoqiq** holatda alohida o'tkazib, taqqoslash.
+- Bosqich 3 da (Vosk) darvoza o'zgarishsiz qayta ishlatiladi: pre-roll to'g'ridan-to'g'ri Vosk'ga beriladi.
+
 ## Bosqich 2 — Closed-loop ijro (2–3 hafta) ← eng yuqori ustuvorlik
 
 Foydalanuvchi shikoyati: 40–50 qadamlik makroda bitta xato hammasini buzadi.

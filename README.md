@@ -23,6 +23,12 @@ Record a sequence of taps, holds and swipes with the floating bubble, give it a 
 - **Guided setup.** The `START` button walks through only the permissions that are still missing (overlay,
   accessibility, microphone, notifications, battery optimization).
 - **OEM hints** for keeping the background service alive on Xiaomi, Samsung, Huawei, Oppo, Vivo and OnePlus.
+- **Voice gate (optional, off by default).** Tap **Ovoz ⚙** on the main screen. When on, speech recognition
+  starts only after a sound louder than a per-phone calibrated threshold, instead of running all the time. On
+  Android 13+ the last 1.2 s of audio is kept and handed to the recognizer, so the start of the trigger is not lost;
+  if a phone's recognizer does not accept that stream, SayDo switches to restart mode automatically. On Android 12
+  and older the start of the trigger can be cut off. The microphone stays open to measure the level (the system mic
+  indicator stays on), and nothing runs when listening is switched off in the app.
 - **Built-in benchmark.** Long-press the SayDo title → Debug → Benchmark to measure voice and replay reliability on
   your own phone.
 

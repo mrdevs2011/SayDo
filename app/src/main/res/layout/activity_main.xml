@@ -12,15 +12,37 @@
         android:orientation="vertical"
         android:paddingTop="16dp">
 
-        <TextView
-            android:id="@+id/titleSayDo"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="24dp"
-            android:text="SayDo"
-            android:textColor="@color/text_primary"
-            android:textSize="34sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingEnd="16dp">
+
+            <TextView
+                android:id="@+id/titleSayDo"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingHorizontal="24dp"
+                android:text="SayDo"
+                android:textColor="@color/text_primary"
+                android:textSize="34sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnVoiceGate"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackground"
+                android:contentDescription="Ovoz darvozasi sozlamalari"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:text="Ovoz ⚙"
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/hint"

@@ -74,6 +74,16 @@ public final class Metrics {
                 .putOpt("lat", latencyMs));
     }
 
+    /** Voice gate opened (level over threshold) and a recognition session started. */
+    public static void gateOpen(String mode, double db) {
+        log(ev("gate_open").putOpt("mode", mode).putOpt("db", Math.round(db * 10) / 10.0));
+    }
+
+    /** Stream mode did not work on this phone; switched to restart mode. */
+    public static void gateFallback(String reason) {
+        log(ev("gate_fallback").putOpt("reason", reason));
+    }
+
     public static void voiceError(int code, String name) {
         log(ev("voice_error").putOpt("code", code).putOpt("name", name));
     }

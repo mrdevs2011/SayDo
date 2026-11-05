@@ -41,6 +41,11 @@ Hisobotdagi **"yolg'on 'OK'"** qatori aynan shuni ko'rsatadi: ilova "OK" dedi, s
 2. Raundlar: **5** (jami 50 sinov).
 3. Har bir ko'rsatilgan iborani aytasiz. 7 soniyada tanilmasa "eshitilmadi" deb yoziladi.
 
+**Ovoz darvozasi:** testni ikki marta o'tkazing — darvoza o'chiq va yoqiq (asosiy ekran → Ovoz ⚙). Yoqiq
+holatda triggerni chegaradan baland ovozda ayting. Jadvalda "Sharoit" ustuniga `jim+darvoza` kabi yozing.
+Hisobotdagi **[Ovoz darvozasi]** qatori necha marta ochilgani va shundan nechtasida trigger topilganini ko'rsatadi
+(qolganlari — trigger bo'lmagan baland tovushlar yoki tanilmagan nutq).
+
 O'lchanadigan: to'g'ri %, noto'g'ri trigger %, eshitilmadi %, kechikish (gap tugashidan to moslikka, p50/p90),
 qaysi trigger eng yomon.
 
