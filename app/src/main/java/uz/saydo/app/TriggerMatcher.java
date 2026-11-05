@@ -24,6 +24,14 @@ public final class TriggerMatcher {
     private static final Map<String, String> CONTRACTIONS = new HashMap<>();
     private static final Set<String> FILLER = new HashSet<>();
 
+    // Multi-word spellings joined before tokenizing. Single-word variants ("utube", "yt")
+    // are handled per token by CANON. Lookarounds keep matches on whole words and let
+    // adjacent matches share the separating space.
+    private static final java.util.regex.Pattern MULTIWORD_WIFI =
+            java.util.regex.Pattern.compile("(?<= )wi fi(?= )");
+    private static final java.util.regex.Pattern MULTIWORD_YOUTUBE =
+            java.util.regex.Pattern.compile("(?<= )(?:u|you|yu) tube(?= )|(?<= )you tobe(?= )");
+
     private static void alias(String canon, String... words) {
         for (String w : words) CANON.put(w, canon);
     }
@@ -179,13 +187,12 @@ public final class TriggerMatcher {
             else sb.append(' ');
         }
 
-        String cleaned = sb.toString().trim()
-                .replace("wi fi", "wifi")
-                .replace("u tube", "youtube")
-                .replace("you tube", "youtube")
-                .replace("yu tube", "youtube")
-                .replace("you tobe", "youtube")
-                .replace("utube", "youtube");
+        // Whole-word joins only. A plain substring replace turned "youtube" into
+        // "yoyoutube" ("utube" inside it), so "yt" (-> "youtube") no longer matched.
+        String cleaned = " " + sb.toString().trim().replaceAll("\\s+", " ") + " ";
+        cleaned = MULTIWORD_WIFI.matcher(cleaned).replaceAll("wifi");
+        cleaned = MULTIWORD_YOUTUBE.matcher(cleaned).replaceAll("youtube");
+        cleaned = cleaned.trim();
 
         String[] rawParts = cleaned.split("\\s+");
         StringBuilder all = new StringBuilder();
@@ -413,7 +420,9 @@ public final class TriggerMatcher {
         String tNo = trigger.replace(" ", "");
         if (tNo.length() >= 3 && hNo.contains(tNo)) return 0.96;
         if (hNo.equals(tNo)) return 1.0;
-        if (tNo.length() < 2) return 0.0;
+        // 1–2 letter triggers only match exactly or as a whole word (handled above):
+        // fuzzy scores on them are noise ("ab" vs "abc" = 0.67).
+        if (tNo.length() < 3) return 0.0;
 
         double best = Math.max(sim(heard, trigger), sim(hNo, tNo));
 
