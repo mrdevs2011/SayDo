@@ -38,6 +38,7 @@ import uz.saydo.app.kernel.data.NodeAnchor;
 import uz.saydo.app.kernel.gesture.SmartGestureDispatcher;
 import uz.saydo.app.kernel.ui.ExecutionHudOverlay;
 import uz.saydo.app.metrics.Metrics;
+import uz.saydo.app.util.DebugLog;
 import uz.saydo.app.util.GestureResampler;
 
 /**
@@ -67,6 +68,7 @@ public class GestureService extends AccessibilityService {
         NodeAnchor anchor;
         String varSlot = "";
         String textToInject = "";
+        String pkg = "";
     }
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -304,88 +306,263 @@ public class GestureService extends AccessibilityService {
         if (d != null) d.onDone(ok);
     }
 
+    /*
+     * Closed-loop playback.
+     *
+     * Each step first waits the recorded pause, then waits until the screen it was recorded on
+     * (the app package saved at recording time) is in front, and briefly for its target view
+     * (anchor) to appear. If the expected app never appears, playback STOPS instead of tapping
+     * on the wrong screen — a wrong tap at step 9 used to ruin steps 10..N.
+     *
+     * Macros recorded before this change have no "pkg" and play as before (time-based).
+     */
+    private static final long SCREEN_WAIT_MS = 8000;
+    private static final long ANCHOR_WAIT_MS = 2500;
+    private static final long POLL_MS = 120;
+    private static final long RETRY_DELAY_MS = 300;
+
     private void step(final List<G> list, final int i, final int tok, final int failures) {
         if (tok != token) return;
         if (i >= list.size()) {
-            finish(tok, failures < list.size(), failures);
+            finish(tok, failures == 0, failures);
             return;
         }
         final G g = list.get(i);
         if (hud != null) hud.update(currentMacroName, i + 1, list.size());
         long gap = (i == 0) ? Math.min(g.st, 60) : Math.max(0, g.st - list.get(i - 1).et);
 
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (tok != token) return;
-                if ("global".equals(g.type)) {
-                    int act = "home".equals(g.action) ? GLOBAL_ACTION_HOME
-                            : "recents".equals(g.action) ? GLOBAL_ACTION_RECENTS
-                            : GLOBAL_ACTION_BACK;
-                    final boolean okGlobal = performGlobalAction(act);
-                    if (!okGlobal) recordFail(i, "global_" + g.action);
-                    handler.postDelayed(() -> step(list, i + 1, tok, okGlobal ? failures : failures + 1), 250);
+        handler.postDelayed(() -> {
+            if (tok != token) return;
+            if ("global".equals(g.type)) {
+                int act = "home".equals(g.action) ? GLOBAL_ACTION_HOME
+                        : "recents".equals(g.action) ? GLOBAL_ACTION_RECENTS
+                        : GLOBAL_ACTION_BACK;
+                final boolean okGlobal = performGlobalAction(act);
+                if (!okGlobal) recordFail(i, "global_" + g.action);
+                handler.postDelayed(() -> step(list, i + 1, tok, okGlobal ? failures : failures + 1), 250);
+                return;
+            }
+            long now = SystemClock.uptimeMillis();
+            awaitScreen(list, i, tok, failures, now + SCREEN_WAIT_MS, now + ANCHOR_WAIT_MS);
+        }, gap);
+    }
+
+    /** Polls until the recorded app is in front (or stops), then briefly for the anchor view. */
+    private void awaitScreen(final List<G> list, final int i, final int tok, final int failures,
+                             final long screenDeadline, final long anchorDeadline) {
+        if (tok != token) return;
+        final G g = list.get(i);
+        long now = SystemClock.uptimeMillis();
+
+        if (!g.pkg.isEmpty()) {
+            String cur = currentScreenPkg();
+            if (cur != null && !cur.equals(g.pkg)) {
+                if (now < screenDeadline) {
+                    handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline,
+                            Math.max(anchorDeadline, SystemClock.uptimeMillis() + ANCHOR_WAIT_MS)), POLL_MS);
                     return;
                 }
+                recordFail(i, "wrong_screen");
+                DebugLog.w("Play", "step " + (i + 1) + " expected " + g.pkg + " but screen is " + cur);
+                stopRun(tok, i, failures + 1, "kutilgan ilova ochilmadi");
+                return;
+            }
+            // cur == null: window not readable right now; do not block on it.
+        }
 
-                // Self-healing UI node anchor resolution
-                if (g.anchor != null) {
-                    AccessibilityNodeInfo root = null;
+        if (g.anchor != null && now < anchorDeadline && !anchorPresent(g.anchor)) {
+            // The view may still be loading; wait a little, then fall back to coordinates.
+            handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline, anchorDeadline), POLL_MS);
+            return;
+        }
+
+        perform(list, i, tok, failures, 0);
+    }
+
+    private void perform(final List<G> list, final int i, final int tok, final int failures, final int attempt) {
+        if (tok != token) return;
+        final G g = list.get(i);
+
+        // Self-healing UI node anchor resolution
+        if (g.anchor != null) {
+            AccessibilityNodeInfo root = null;
+            try {
+                root = getRootInActiveWindow();
+            } catch (Throwable ignored) {
+            }
+            if (root != null) {
+                try {
+                    int[] size = screenSize();
+                    int w = size[0], h = size[1];
+                    Gesture domainGesture = new Gesture(g.type, g.action, g.x, g.y, g.st, g.et, g.dur, g.pts, g.anchor, g.varSlot, g.textToInject);
+                    SmartGestureDispatcher.ResolveResult res =
+                            SmartGestureDispatcher.resolveAndExecute(root, domainGesture, w, h, null);
+                    if (res.handledDirectly) {
+                        handler.postDelayed(() -> step(list, i + 1, tok, failures), 60);
+                        return;
+                    } else if (res.foundAnchor) {
+                        g.x = (double) res.adjustedX / w;
+                        g.y = (double) res.adjustedY / h;
+                    }
+                } catch (Throwable ignored) {
+                } finally {
                     try {
-                        root = getRootInActiveWindow();
+                        root.recycle();
                     } catch (Throwable ignored) {
                     }
-                    if (root != null) {
-                        try {
-                            int[] size = screenSize();
-                            int w = size[0], h = size[1];
-                            Gesture domainGesture = new Gesture(g.type, g.action, g.x, g.y, g.st, g.et, g.dur, g.pts, g.anchor, g.varSlot, g.textToInject);
-                            SmartGestureDispatcher.ResolveResult res =
-                                    SmartGestureDispatcher.resolveAndExecute(root, domainGesture, w, h, null);
-                            if (res.handledDirectly) {
-                                handler.postDelayed(() -> step(list, i + 1, tok, failures), 60);
-                                return;
-                            } else if (res.foundAnchor) {
-                                g.x = (double) res.adjustedX / w;
-                                g.y = (double) res.adjustedY / h;
-                            }
-                        } finally {
-                            try {
-                                root.recycle();
-                            } catch (Throwable ignored) {
-                            }
-                        }
-                    }
-                }
-
-                GestureDescription gd;
-                try {
-                    gd = build(g);
-                } catch (Throwable e) {
-                    recordFail(i, "build_error");
-                    step(list, i + 1, tok, failures + 1);
-                    return;
-                }
-
-                boolean accepted = dispatchGesture(gd, new GestureResultCallback() {
-                    @Override
-                    public void onCompleted(GestureDescription description) {
-                        step(list, i + 1, tok, failures);
-                    }
-
-                    @Override
-                    public void onCancelled(GestureDescription description) {
-                        recordFail(i, "cancelled");
-                        step(list, i + 1, tok, failures + 1);
-                    }
-                }, null);
-
-                if (!accepted) {
-                    recordFail(i, "not_accepted");
-                    step(list, i + 1, tok, failures + 1);
                 }
             }
-        }, gap);
+        }
+
+        GestureDescription gd;
+        try {
+            gd = build(g);
+        } catch (Throwable e) {
+            recordFail(i, "build_error");
+            stopRun(tok, i, failures + 1, "harakatni qurib bo'lmadi");
+            return;
+        }
+
+        boolean accepted = dispatchGesture(gd, new GestureResultCallback() {
+            @Override
+            public void onCompleted(GestureDescription description) {
+                step(list, i + 1, tok, failures);
+            }
+
+            @Override
+            public void onCancelled(GestureDescription description) {
+                // Interrupted (e.g. a real touch or system dialog): the step did not happen.
+                if (attempt == 0) {
+                    handler.postDelayed(() -> perform(list, i, tok, failures, 1), RETRY_DELAY_MS);
+                } else {
+                    recordFail(i, "cancelled");
+                    stopRun(tok, i, failures + 1, "harakat bekor qilindi");
+                }
+            }
+        }, null);
+
+        if (!accepted) {
+            if (attempt == 0) {
+                handler.postDelayed(() -> perform(list, i, tok, failures, 1), RETRY_DELAY_MS);
+            } else {
+                recordFail(i, "not_accepted");
+                stopRun(tok, i, failures + 1, "tizim harakatni qabul qilmadi");
+            }
+        }
+    }
+
+    /** Stop the macro at step i instead of continuing on a wrong screen, and tell the user. */
+    private void stopRun(int tok, int i, int failures, String why) {
+        if (tok != token) return;
+        final String msg = "SayDo: \"" + currentMacroName + "\" " + (i + 1) + "-qadamda to'xtadi — " + why;
+        handler.post(() -> {
+            try {
+                android.widget.Toast.makeText(getApplicationContext(), msg, android.widget.Toast.LENGTH_LONG).show();
+            } catch (Throwable ignored) {
+            }
+        });
+        finish(tok, false, failures);
+    }
+
+    /** App in front during playback (same rules as recording). */
+    private String currentScreenPkg() {
+        return foregroundAppPkg();
+    }
+
+    private Set<String> ignoredCache;
+    private long ignoredCacheAt;
+
+    private Set<String> ignoredCached() {
+        long now = SystemClock.uptimeMillis();
+        if (ignoredCache == null || now - ignoredCacheAt > 5000) {
+            ignoredCache = ignoredPackages(); // SayDo, systemui, "android", keyboards
+            ignoredCacheAt = now;
+        }
+        return ignoredCache;
+    }
+
+    /**
+     * Package of the app the user is working in, or null if unknown.
+     * Keyboards, the notification shade/system UI and SayDo's own overlays are skipped, so
+     * typing on the keyboard or pulling the shade still counts as "the same app".
+     * Used identically for recording and playback so the two always agree.
+     */
+    private String foregroundAppPkg() {
+        Set<String> ignored = ignoredCached();
+        AccessibilityNodeInfo root = null;
+        try {
+            root = getRootInActiveWindow();
+            if (root != null && root.getPackageName() != null) {
+                String p = root.getPackageName().toString();
+                if (!ignored.contains(p)) return p;
+            }
+        } catch (Throwable ignoredErr) {
+        } finally {
+            if (root != null) {
+                try { root.recycle(); } catch (Throwable ignoredErr) {}
+            }
+        }
+        // Active window is a keyboard / shade / overlay: use the top application window.
+        try {
+            String best = null;
+            int bestLayer = Integer.MIN_VALUE;
+            for (android.view.accessibility.AccessibilityWindowInfo w : getWindows()) {
+                if (w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                AccessibilityNodeInfo r = w.getRoot();
+                if (r == null) continue;
+                try {
+                    CharSequence cp = r.getPackageName();
+                    if (cp == null || ignored.contains(cp.toString())) continue;
+                    if (w.getLayer() > bestLayer) {
+                        bestLayer = w.getLayer();
+                        best = cp.toString();
+                    }
+                } finally {
+                    try { r.recycle(); } catch (Throwable ignoredErr) {}
+                }
+            }
+            return best;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Screen package for a stroke being recorded, or null (then that step plays time-based).
+     * Not recorded on the lock screen: what is "behind" the keyguard differs between runs.
+     */
+    static String screenPackageForRecording() {
+        GestureService s = instance;
+        if (s == null) return null;
+        try {
+            android.app.KeyguardManager km =
+                    (android.app.KeyguardManager) s.getSystemService(KEYGUARD_SERVICE);
+            if (km != null && km.isKeyguardLocked()) return null;
+        } catch (Throwable ignored) {
+        }
+        return s.foregroundAppPkg();
+    }
+
+    private boolean anchorPresent(NodeAnchor anchor) {
+        AccessibilityNodeInfo root = null;
+        try {
+            root = getRootInActiveWindow();
+            if (root == null) return true; // cannot check -> do not wait
+            AccessibilityNodeInfo n = SmartGestureDispatcher.findMatchingNode(root, anchor);
+            if (n != null) {
+                if (n != root) {
+                    try { n.recycle(); } catch (Throwable ignored) {}
+                }
+                return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            return true;
+        } finally {
+            if (root != null) {
+                try { root.recycle(); } catch (Throwable ignored) {}
+            }
+        }
     }
 
     private void recordFail(int stepIndex, String reason) {
@@ -507,6 +684,7 @@ public class GestureService extends AccessibilityService {
             }
             g.varSlot = o.optString("var", "");
             g.textToInject = o.optString("txt", "");
+            g.pkg = o.optString("pkg", "");
             out.add(g);
         }
         Collections.sort(out, Comparator.comparingLong(a -> a.st));
