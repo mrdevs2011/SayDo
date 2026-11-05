@@ -43,9 +43,11 @@ public class DebugActivity extends Activity implements DebugLog.Listener {
         Button copy = btn("Copy all", "#22C55E");
         Button clear = btn("Clear", "#EF4444");
         Button refresh = btn("Refresh", "#3B82F6");
+        Button bench = btn("Benchmark", "#A855F7");
         bar.addView(copy, lp(d));
         bar.addView(clear, lp(d));
         bar.addView(refresh, lp(d));
+        bar.addView(bench, lp(d));
         root.addView(bar);
 
         scroll = new ScrollView(this);
@@ -71,6 +73,8 @@ public class DebugActivity extends Activity implements DebugLog.Listener {
         });
         clear.setOnClickListener(v -> DebugLog.clear());
         refresh.setOnClickListener(v -> render());
+        bench.setOnClickListener(v -> startActivity(
+                new android.content.Intent(this, BenchmarkActivity.class)));
 
         render();
     }

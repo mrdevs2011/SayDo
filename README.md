@@ -1,48 +1,62 @@
 # SayDo (`uz.saydo.app`)
 
-Say it — done. Voice-triggered automation macros for Android with sub-millisecond 1:1 fidelity and 100% offline speech recognition.
+Say it — done. Voice-triggered touch macros for Android.
 
-Record any multi-touch interaction (tap, hold, swipe) using the floating bubble, assign a voice command, and SayDo executes it whenever you speak—even from the lock screen.
+Record a sequence of taps, holds and swipes with the floating bubble, give it a voice command, and SayDo replays it when you say the command.
 
----
-
-## Key Capabilities
-
-- **100% Offline English Voice Recognition**: Powered by Android's on-device speech engine. No internet connection required, zero cloud latency, zero external data transfer.
-- **Zero Separate Settings Screen**: Single-tap **Auto Start** onboarding chain on the `START` button that verifies and guides only through missing device permissions.
-- **Sub-Millisecond 1:1 Gesture Recording**: Captures batched historical touch events with microsecond timestamps and sub-pixel normalization.
-- **Zero Visual Clutter**: No distracting lines, dots, or borders during recording; touches pass directly through to underlying applications.
-- **Lock-Screen Macro Support**: Records and replays lock-screen bypasses (PIN digit entry, swipe patterns) seamlessly via wake locks.
-- **Zero Polling & Battery Efficiency**: 0% idle CPU consumption; fully reactive repository architecture.
-- **OEM Deep Autostart Diagnostics**: Tailored power management diagnostics for Xiaomi (MIUI/HyperOS), Samsung (OneUI), Huawei (EMUI), Oppo (ColorOS), Vivo, and OnePlus.
+> **Status: beta.** Voice triggering and long-macro replay are not yet reliable on every device.
+> See [docs/ROADMAP.md](docs/ROADMAP.md) for the known problems and the plan, and
+> [docs/BENCHMARK.md](docs/BENCHMARK.md) for how reliability is measured.
 
 ---
 
-## Technical Documentation
+## What it does today
 
-- **[System Architecture](docs/ARCHITECTURE.md)**: Reactive Repository, FSM Speech Engine, Catmull-Rom Spline Resampler, and Accessibility Dispatcher.
-- **[Reliability & OEM Guide](docs/RELIABILITY.md)**: OEM autostart matrix, SpeechRecognizer 13+ error recovery, circular crash logger, and audio focus management.
+- **Voice triggers (English).** Uses Android's built-in `SpeechRecognizer`. It prefers the on-device engine when the
+  device has one; otherwise it may fall back to the online Google engine. There can be short gaps between listening
+  sessions where a command is missed.
+- **Gesture recording and replay.** Taps, holds and swipes are recorded with their timing and replayed through the
+  Accessibility service. Replay is time-based and does not yet check that the expected screen appeared, so long
+  macros can drift if an app loads slower than during recording.
+- **Lock-screen macros.** Macros can be recorded and started from the lock screen. Screens that block accessibility
+  (`FLAG_SECURE`, many banking and PIN screens) cannot be automated reliably.
+- **Guided setup.** The `START` button walks through only the permissions that are still missing (overlay,
+  accessibility, microphone, notifications, battery optimization).
+- **OEM hints** for keeping the background service alive on Xiaomi, Samsung, Huawei, Oppo, Vivo and OnePlus.
+- **Built-in benchmark.** Long-press the SayDo title → Debug → Benchmark to measure voice and replay reliability on
+  your own phone.
+
+## Known limitations
+
+- English triggers only.
+- Replay is open-loop: one failed step is not detected, and the following steps continue on the wrong screen.
+- The app's own "done" message is not proof that the macro succeeded.
+- Background survival depends on the phone's battery settings.
 
 ---
 
-## Building & Verification
+## Documentation
 
-### Prerequisites
-- JDK 17
-- Android SDK Platform 34/35 (minSdk 26, targetSdk 34, compileSdk 35)
+- [Roadmap](docs/ROADMAP.md) — reliability plan and stage criteria
+- [Benchmark protocol](docs/BENCHMARK.md) — how to measure a release
+- [Architecture](docs/ARCHITECTURE.md)
+- [Reliability & OEM guide](docs/RELIABILITY.md)
 
-### Running Unit Tests
-SayDo contains an exhaustive unit test suite covering NLP matching, Catmull-Rom resampling, atomic recovery, and multi-threading concurrency:
+---
+
+## Building
+
+Prerequisites: JDK 17, Android SDK (compileSdk 35, minSdk 26, targetSdk 34), Gradle 8.9.
+The repository has no Gradle wrapper; CI uses Gradle 8.9 (see `.github/workflows/build.yml`).
+
 ```bash
-./gradlew testDebugUnitTest
+gradle testDebugUnitTest   # unit tests (JVM, mocked Android)
+gradle assembleRelease     # APK
 ```
 
-### Building APK
-```bash
-./gradlew assembleRelease
-```
-
----
+Unit tests cover pure logic (trigger matching, resampling, storage, metrics). They do not prove on-device
+behaviour; use the benchmark for that.
 
 ## Installation
-Download the signed production APK from [Releases](https://github.com/mrdevs2011/SayDo/releases).
+
+Download the APK from [Releases](https://github.com/mrdevs2011/SayDo/releases).
