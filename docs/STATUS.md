@@ -1,38 +1,43 @@
 # SayDo status
 
-Last updated: 2026-11-06. Version on `main`: 2.12.0 (`a0fe5f0`).
+Last updated: 2026-11-06. Version on `main`: 2.12.0 (`1dffca6`).
 
 Only what was observed on a real phone counts as working. Unit tests run on a JVM with Android
 stubbed, so they cannot prove on-device behaviour.
 
 ## State by feature
 
+Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Settings app only.
+
 | Feature | State | Evidence |
 |---|---|---|
-| Install, launch, main screen | Works | Galaxy A12, Android 13 |
-| Guided setup (START) | Works, poor UX | Sends the user to "Device assistance app", where there is nothing to do |
-| Start from launcher default page | Works | Galaxy A12, build `3b93285` |
-| Recording coordinates | Accurate | Tap at 583x1460 stored as 0.8097 x 0.9125 |
-| Recording: one tap = one stroke | **Fix unverified** | Bug seen on device: one tap saved 3 times. Fix in `a0fe5f0`, not yet seen working |
-| Saving a macro | **Unreliable** | First recording was lost, second saved. Cause unknown |
-| Replay | **Never run on a phone** | |
-| Closed-loop replay (`pkg` wait, stop on wrong app) | **Never run on a phone** | |
-| Voice triggers | **Never tested on a phone** | |
-| Voice gate (loudness) | **Never tested on a phone** | Off by default |
-| Benchmark screen | **Never run on a phone** | |
-| MCP relay | Deployed, E2E test passes locally | `https://saydo-relay.vercel.app` answers; simulated phone only |
-| MCP on the phone | **Never run on a phone** | Off by default |
+| Install, launch, main screen | Works | Galaxy A12 and S22+ |
+| Start from launcher default page | Works | A12, S22+ |
+| One tap = one stroke | **Works** | S22+: 4/4 recordings stored exactly the taps sent, no stray strokes |
+| Recording coordinates | Accurate | e.g. tap at 948,222 stored as 0.8778 / 0.0949 |
+| Saving | Works | 9/9 recordings with input saved; quick-stop 0.1 s still saved; list survives reopening. The earlier lost recording was not reproduced |
+| Replay, short macros | Works in narrow tests | 14/14 verified runs did every step once and ended on the recorded screen (4-5 steps, Settings only) |
+| Replay, 12 steps | Works in narrow tests | 5/5, final screen only; intermediate screens not checked |
+| Swipe | Works | 3/3, list ended within about 13 px of the recording |
+| Stops on a wrong screen | Works once | 1/1: expected `com.android.settings`, saw the launcher, no tap sent. The on-screen stop message was not captured |
+| Replay speed | **Slow** | About 6 s per step even where the recorded gap was 3 s. Suspected: the 2.5 s anchor wait in `GestureService.awaitScreen`, unconfirmed |
+| Other apps, slow screens, long idle gaps | **Not tested** | |
+| Voice triggers | **Not tested** | `onError code=5 CLIENT` appears about once a second in the log |
+| Voice gate | **Not tested** | Off by default |
+| MCP relay | Deployed, E2E test passes locally | Simulated phone only |
+| MCP on the phone | **Not tested** | Off by default |
 
 ## Known bugs
 
-1. **Lost recording.** A recording made from the SayDo screen did not save. It may have been a
-   side effect of the old home-detection bug. Not reproduced or explained.
-2. **Speech pack prompt.** The 62 MB system dialog appeared over the camera. `a0fe5f0` limits it to
-   when SayDo is in front; unverified.
-3. **Stale status text.** The main screen stays on "Starting..." until it is reopened.
-4. **Beeps.** Probably from `SpeechRecognizer` restarting. Not confirmed.
-5. **Bubble covers UI.** The floating button overlapped the trigger panel and a dialog button.
-6. **Accessibility via ADB right after install** did not stick the first time; setting it again worked.
+1. **START button covers the list.** With about 8 or more macros, the play button of a lower row sits under the big START/STOP button; tapping it toggles listening instead. (`activity_main.xml`)
+2. **Slow replay.** See above.
+3. **Voice `CLIENT` error** roughly once per second; may be what causes the beeps. Not investigated.
+4. **Stale status text.** The main screen stays on "Starting..." until it is reopened.
+5. **Confusing first START.** On a fresh install it sends the user to the Samsung battery page, then to "Digital assistant app", where there is nothing to do.
+6. **Status-bar swipe not recorded.** A swipe starting at the very top edge is not captured by the overlay.
+7. **Delete button** needs two taps within about 2 s; easy to miss.
+8. **Accessibility via ADB** right after install sometimes does not stick; setting it again works.
+9. **Speech pack.** A "Downloading offline English voice pack" toast appears; the system dialog over other apps was not seen again.
 
 ## Corrections to earlier claims
 
