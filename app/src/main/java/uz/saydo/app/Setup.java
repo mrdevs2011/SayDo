@@ -26,8 +26,8 @@ public final class Setup {
     public static final int NEED_ACCESSIBILITY = 2;
     public static final int NEED_MIC = 3;
     public static final int NEED_NOTIF = 4;
+    /** Optional: never returned by missing(); used only to open the battery page on request. */
     public static final int NEED_BATTERY = 5;
-    public static final int NEED_VOICE_PACK = 6;
 
     private Setup() {}
 
@@ -59,24 +59,23 @@ public final class Setup {
         }
     }
 
+    /** Only what is needed to run. Battery and the speech pack are optional and never block START. */
     public static int missing(Context c) {
         if (c == null) return OK;
-        if (!Settings.canDrawOverlays(c)) return NEED_OVERLAY;
-        if (!accessibilityOn(c)) return NEED_ACCESSIBILITY;
-        if (c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return NEED_MIC;
-        }
-        if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            return NEED_NOTIF;
-        }
-        SettingsRepository settings = SettingsRepository.getInstance(c);
-        if (Build.VERSION.SDK_INT >= 23 && !isBatteryOptimizationIgnored(c) && !settings.isBatteryAsked()) {
-            return NEED_BATTERY;
-        }
-        if (!settings.isVoiceGuided()) {
-            return NEED_VOICE_PACK;
-        }
-        return OK;
+        return uz.saydo.app.util.SetupPolicy.firstMissing(
+                Settings.canDrawOverlays(c),
+                accessibilityOn(c),
+                c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
+                Build.VERSION.SDK_INT >= 33,
+                Build.VERSION.SDK_INT < 33
+                        || c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED);
+    }
+
+    /** True once per install if background battery limits are on: offer the page, do not force it. */
+    public static boolean shouldOfferBattery(Context c) {
+        if (c == null) return false;
+        return uz.saydo.app.util.SetupPolicy.shouldOfferBattery(Build.VERSION.SDK_INT,
+                isBatteryOptimizationIgnored(c), SettingsRepository.getInstance(c).isBatteryAsked());
     }
 
     public static boolean isLocked(Context c) {
@@ -97,48 +96,6 @@ public final class Setup {
         i.putExtra(":settings:fragment_args_key", flat);
         i.putExtra(":settings:show_fragment_args", args);
         return i;
-    }
-
-    public static void openVoiceSettings(Context c) {
-        if (c == null) return;
-        // 1. Google Speech Recognition offline language packs
-        try {
-            Intent googleSpeechIntent = new Intent("com.google.android.voicesearch.action.SETTINGS");
-            googleSpeechIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            if (OemPermissionHelper.canResolveIntent(c, googleSpeechIntent)) {
-                c.startActivity(googleSpeechIntent);
-                Toast.makeText(c.getApplicationContext(), "Offline speech recognition > Install English (US)", Toast.LENGTH_LONG).show();
-                return;
-            }
-        } catch (Throwable ignored) {
-        }
-
-        // 2. Standard Voice Input Settings
-        try {
-            Intent i = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            c.startActivity(i);
-            Toast.makeText(c.getApplicationContext(), "Voice input > Offline speech recognition > English (US)", Toast.LENGTH_LONG).show();
-            return;
-        } catch (Throwable ignored) {
-        }
-
-        // 3. Fallback Locale Settings
-        try {
-            Intent i = new Intent(Settings.ACTION_LOCALE_SETTINGS);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            c.startActivity(i);
-            Toast.makeText(c.getApplicationContext(), "Ensure English (US) voice input is enabled", Toast.LENGTH_LONG).show();
-            return;
-        } catch (Throwable ignored) {
-        }
-
-        try {
-            Intent i = new Intent(Settings.ACTION_SETTINGS);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            c.startActivity(i);
-        } catch (Throwable ignored) {
-        }
     }
 
     public static void route(Context c, int step) {
@@ -180,10 +137,6 @@ public final class Setup {
                     return;
                 }
                 break;
-            case NEED_VOICE_PACK:
-                SettingsRepository.getInstance(c).setVoiceGuided(true);
-                openVoiceSettings(c);
-                return;
             default:
                 return;
         }

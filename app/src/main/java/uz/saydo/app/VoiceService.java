@@ -73,6 +73,8 @@ public class VoiceService extends Service implements
     private static final long GUARD_INTERVAL_MS = 250;
 
     public static volatile boolean running = false;
+    /** Shown on the main screen when the offline English pack is not installed; null otherwise. */
+    public static volatile String voicePackMessage = null;
     private static volatile VoiceService sInstance;
 
     /**
@@ -257,6 +259,7 @@ public class VoiceService extends Service implements
         if (sInstance == this) sInstance = null;
         destroyed = true;
         running = false;
+        voicePackMessage = null;
         transitionTo(State.STOPPED);
 
         cancelWatchdog();
@@ -305,6 +308,13 @@ public class VoiceService extends Service implements
             }
         }
         return true;
+    }
+
+    private void notifyUiState() {
+        String desc = getStateDescription(state);
+        for (StateListener l : stateListeners) {
+            try { l.onStateChanged(state, desc); } catch (Throwable ignored) { }
+        }
     }
 
     private String getStateDescription(State s) {
@@ -515,11 +525,16 @@ public class VoiceService extends Service implements
             recognizer.checkRecognitionSupport(probe, getMainExecutor(), new RecognitionSupportCallback() {
                 @Override
                 public void onSupportResult(RecognitionSupport support) {
-                    if (hasEnglish(support.getInstalledOnDeviceLanguages())) return;
+                    if (hasEnglish(support.getInstalledOnDeviceLanguages())) {
+                        voicePackMessage = null;
+                        notifyUiState();
+                        return;
+                    }
+                    voicePackMessage = "offline English pack not installed (voice may need internet)";
+                    notifyUiState();
                     if (hasEnglish(support.getSupportedOnDeviceLanguages())) {
                         try {
                             if (recognizer != null) recognizer.triggerModelDownload(probe);
-                            toast("Downloading offline English voice pack…");
                         } catch (Throwable ignored) {
                         }
                     }
@@ -710,7 +725,8 @@ public class VoiceService extends Service implements
 
                 case 12: // ERROR_LANGUAGE_NOT_SUPPORTED
                 case 13: // ERROR_LANGUAGE_UNAVAILABLE
-                    toast("Download offline English pack in Voice Settings");
+                    voicePackMessage = "offline English pack missing (voice may need internet)";
+                    notifyUiState();
                     transitionTo(State.BACKOFF_RECOVERY);
                     recreateRecognizerSafely();
                     delay = 1000;

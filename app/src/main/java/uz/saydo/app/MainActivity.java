@@ -211,8 +211,12 @@ public class MainActivity extends AppCompatActivity implements
         btnStart.setText(enabled ? "STOP" : "START");
         btnStart.setBackgroundResource(enabled ? R.drawable.bg_btn_stop : R.drawable.bg_btn_start);
 
-        if (enabled && listening) {
-            hint.setText("Listening · English (offline)");
+        String packMsg = VoiceService.voicePackMessage;
+        if (enabled && listening && packMsg != null) {
+            hint.setText("Listening · " + packMsg);
+            hint.setTextColor(ContextCompat.getColor(this, R.color.accent));
+        } else if (enabled && listening) {
+            hint.setText("Listening · say a trigger");
             hint.setTextColor(ContextCompat.getColor(this, R.color.success));
         } else if (enabled) {
             hint.setText("Starting…");
@@ -246,6 +250,7 @@ public class MainActivity extends AppCompatActivity implements
             lastStep = -1;
             applyMaster(true);
             toast("SayDo is active! Tap floating START anytime");
+            offerBatteryOnce();
             return;
         }
         if (step == lastStep) {
@@ -263,18 +268,23 @@ public class MainActivity extends AppCompatActivity implements
             case Setup.NEED_NOTIF:
                 requestNotif();
                 break;
-            case Setup.NEED_BATTERY:
-                SettingsRepository.getInstance(this).setBatteryAsked(true);
-                Setup.route(this, step);
-                break;
-            case Setup.NEED_VOICE_PACK:
-                SettingsRepository.getInstance(this).setVoiceGuided(true);
-                Setup.route(this, step);
-                break;
             default:
                 Setup.route(this, step);
                 break;
         }
+    }
+
+    /** Optional and asked only once. Declining or ignoring it changes nothing about START. */
+    private void offerBatteryOnce() {
+        if (destroyed || !Setup.shouldOfferBattery(this)) return;
+        SettingsRepository.getInstance(this).setBatteryAsked(true);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Keep voice listening alive?")
+                .setMessage("Android may stop SayDo in the background to save battery. "
+                        + "You can allow unrestricted background use. This is optional.")
+                .setNegativeButton("Not now", null)
+                .setPositiveButton("Open settings", (d, w) -> Setup.route(this, Setup.NEED_BATTERY))
+                .show();
     }
 
     private String stepName(int step) {
@@ -283,8 +293,6 @@ public class MainActivity extends AppCompatActivity implements
             case Setup.NEED_ACCESSIBILITY: return "Accessibility service";
             case Setup.NEED_MIC: return "Microphone permission";
             case Setup.NEED_NOTIF: return "Notification permission";
-            case Setup.NEED_BATTERY: return "Battery optimization exemption";
-            case Setup.NEED_VOICE_PACK: return "Offline voice setup";
             default: return "Setup";
         }
     }
