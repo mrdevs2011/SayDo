@@ -23,6 +23,7 @@ final class McpConfig {
     private static final String PREFS = "saydo_mcp";
     private static final String K_ENABLED = "enabled";
     private static final String K_FULL = "full_control";
+    private static final String K_AI_NOTIF = "ai_notifications";
     private static final String K_RELAY = "relay";
     private static final String K_ID = "device_id";
     private static final String K_SECRET = "device_secret";
@@ -68,6 +69,10 @@ final class McpConfig {
     /** Screen control (read, tap, type, screenshot). Off = only status + macros. */
     boolean fullControl() { return p.getBoolean(K_FULL, true); }
     void setFullControl(boolean on) { p.edit().putBoolean(K_FULL, on).apply(); }
+
+    /** Lets the AI read notifications (read_notifications). Off by default; they may hold private messages. */
+    boolean aiNotifications() { return p.getBoolean(K_AI_NOTIF, false); }
+    void setAiNotifications(boolean on) { p.edit().putBoolean(K_AI_NOTIF, on).apply(); }
 
     String relay() {
         String r = p.getString(K_RELAY, DEFAULT_RELAY);
