@@ -1,121 +1,52 @@
-# SayDo System Architecture & Engineering Specification
+# SayDo architecture
 
-## 1. Overview & Core Philosophy
+A short description of what is in the code. Behaviour on a real phone is in `docs/STATUS.md`.
+Nothing here is a performance or reliability claim.
 
-SayDo is an ultra-reliable, zero-compromise voice automation system for Android (API 26 to API 35). It empowers users to record physical multi-touch macros (taps, holds, swipes) and trigger them using 100% offline English voice commands anywhere in the operating system—including the lock screen.
+## Components
 
-### Non-Negotiable Operational Principles
-- **100% Offline Speech Recognition**: Never relies on cloud services; utilizes Android's on-device speech engine with offline English language packs.
-- **Zero Separate Settings Screen**: A frictionless sequential Auto Start chain on the `START` button resolves only missing system permissions.
-- **Sub-Millisecond 1:1 Gesture Fidelity**: Touch points are captured and replayed with microsecond timestamps and sub-pixel normalization.
-- **Zero Visual Clutter**: No lines, dots, or borders appear on screen during recording; touches pass directly through to underlying applications.
-- **Zero Polling / 0% Idle CPU**: The user interface and background services operate entirely on reactive push subscriptions.
+- `MainActivity`, `TriggerActivity`, `MacroStudioActivity`: UI. The main screen lists macros and has the `START` button.
+- `FloatService`: floating bubble and the recording overlay.
+- `GestureService` (AccessibilityService): dispatches taps, holds and swipes, and reads the screen for anchors and the
+  current app. `SmartGestureDispatcher` and `NodeAnchor` (in `kernel/`) are used by it.
+- `Runner`: starts a macro (wake, go Home, then `GestureService`).
+- `VoiceService`: foreground service. Uses Android `SpeechRecognizer`, asks for the on-device engine first
+  (`EXTRA_PREFER_OFFLINE`); it may use the online engine when no offline pack is available. Matches the result with
+  `TriggerMatcher` (and `ParametricMatcher` / `MultilingualMatcher` from `kernel/voice`).
+- `McpService`, `McpRelay`, `McpCommands`: optional remote control through the `relay/` project. Off by default.
+- `audio/VoiceGate`: optional loudness gate. Off by default.
+- `data/MacroRepository`: macros in `macros_v2.json`.
+- `metrics`, `BenchmarkActivity`: local measurements.
 
----
+## Storage
 
-## 2. High-Level Architecture Diagram
+`MacroRepository` writes a temporary file, syncs it, keeps the old file as `macros_v2.json.bak` and renames the new
+one into place. A missing or corrupt main file is restored from the `.bak`. Access is guarded by a
+`ReentrantReadWriteLock`. Old v1 SharedPreferences data is migrated.
 
-```mermaid
-flowchart TD
-    subgraph UI ["User Interface Layer"]
-        MA[MainActivity]
-        TA[TriggerActivity]
-        FS[FloatService / Bubble]
-    end
+## Recording and replay
 
-    subgraph Data ["Reactive Data & Persistence Layer"]
-        MR[MacroRepository]
-        SR[SettingsRepository]
-        AF[AtomicFile / macros_v2.json]
-        BF[macros_v2.json.bak]
-    end
+- Recording: the overlay catches touches and re-injects them, storing points normalized to 0..1 with timestamps.
+  Each stroke stores the package of the app in front and, when found, a `NodeAnchor` (id, text or description of the
+  touched view).
+- Replay: for each step, wait for the recorded app (up to 8 s, pause before a step with a known app capped at 3 s),
+  try the anchor for up to 2.5 s (skipped when it can never match), otherwise use coordinates. The path is resampled
+  and smoothed (`GestureResampler`) and split into segments when longer than the system maximum gesture duration.
+  A cancelled gesture is retried once; then replay stops.
+- Not done: checking the exact screen inside an app, `FLAG_SECURE` screens.
 
-    subgraph Core ["Engine Subsystems"]
-        VS[VoiceService / FSM Engine]
-        TM[TriggerMatcher / NLP & Phonetics]
-        GS[GestureService / Accessibility Dispatcher]
-        RN[Runner / Execution Orchestrator]
-        GR[GestureResampler / Catmull-Rom Splines]
-    end
+## Voice
 
-    MA -->|Subscribe / Observe| MR
-    MA -->|Subscribe / Observe| SR
-    FS -->|Save Macro| MR
-    VS -->|Read / Bias Triggers| MR
-    VS -->|Fuzzy Match| TM
-    VS -->|Trigger Execution| RN
-    RN -->|Wake & Home Navigation| GS
-    GS -->|Smooth & Resample| GR
-    MR -->|Atomic Write & Fallback| AF
-    AF -.->|Corrupted Recovery| BF
-```
+`VoiceService` restarts a `SpeechRecognizer` session repeatedly; each error code has its own restart delay.
+The service does not request audio focus. The sessions are short and Google's speech service plays its own start and
+end sounds (open problem, see `docs/STATUS.md`). `TriggerMatcher` normalizes text and compares with edit distance
+and a phonetic key. Recognition quality has not been measured.
 
----
+## Crash log
 
-## 3. Reactive Repository & Atomic Storage Subsystem
+`SayDoApp` installs an uncaught-exception handler that writes to `app_crash.log` (trimmed when it grows large).
 
-### 3.1 Domain Models
-- [`TouchPoint`](file:///home/muhamad/SayDo/app/src/main/java/uz/saydo/app/data/TouchPoint.java): Immutable coordinate `(double x, double y, long t)` normalized to `[0.0, 1.0]` with strict validation rejecting `NaN` and negative timestamps.
-- [`Gesture`](file:///home/muhamad/SayDo/app/src/main/java/uz/saydo/app/data/Gesture.java): Typed representation of an interaction (`tap`, `hold`, `swipe`, `global`), containing immutable touch points and timing metrics.
-- [`Macro`](file:///home/muhamad/SayDo/app/src/main/java/uz/saydo/app/data/Macro.java): Immutable automation entity holding a unique UUID, normalized trigger phrase, list of gestures, duration, and lock-screen flag.
+## `kernel/`
 
-### 3.2 Atomic File Persistence & Fault Recovery
-- **Atomic Writes**: Writes first to a temporary file (`macros_v2.json.tmp`), flushes file descriptors via `fos.getFD().sync()`, rotates the existing file to `macros_v2.json.bak`, and renames the temporary file atomically.
-- **Corrupted Backup Recovery**: If `macros_v2.json` is missing or corrupted by abrupt power loss, `MacroRepository` automatically restores from `macros_v2.json.bak`.
-- **Legacy Migration**: Automatically migrates legacy v1 SharedPreferences strings to typed v2 models without data loss.
-- **Thread Safety**: Access is guarded by a `ReentrantReadWriteLock` ensuring lock-free concurrent reads and synchronized atomic mutations.
-
----
-
-## 4. Continuous Offline Speech Recognition FSM
-
-The speech engine operates as a formalized Finite State Machine (FSM) to prevent resource contention, audio device lockup, and recognizer crashes.
-
-```mermaid
-stateDiagram-v2
-    [*] --> STOPPED
-    STOPPED --> PREPARING: Start Requested
-    PREPARING --> LISTENING: Recognizer Ready
-    LISTENING --> PROCESSING: Beginning of Speech
-    PROCESSING --> EXECUTING_MACRO: Trigger Matched
-    PROCESSING --> COOLDOWN: No Match / Silence
-    EXECUTING_MACRO --> COOLDOWN: Macro Finished
-    COOLDOWN --> PREPARING: Cooldown Elapsed (1800ms)
-    LISTENING --> BACKOFF_RECOVERY: Error (Busy/Client/Audio)
-    BACKOFF_RECOVERY --> PREPARING: Guard Interval (250ms)
-    PREPARING --> STOPPED: Permission Revoked / Stop
-```
-
-### 4.1 FSM States
-1. **`STOPPED`**: Service is idle; audio hardware and wake locks released.
-2. **`PREPARING`**: Offline model verified, audio focus requested, recognizer instantiated.
-3. **`LISTENING`**: Active microphone sampling with partial results processing.
-4. **`PROCESSING`**: Speech detected; running token windowing and phonetic matching.
-5. **`EXECUTING_MACRO`**: Microphone paused, wake lock released, gesture playback active.
-6. **`COOLDOWN`**: Guard period preventing self-triggering from ambient echo or repetitive phrases.
-7. **`BACKOFF_RECOVERY`**: Exponential backoff handling transient audio server restarts.
-
-### 4.2 NLP & Phonetic Trigger Matching Engine
-- **Contraction Normalization**: Pre-tokenization expansion (`can't` -> `cannot`, `won't` -> `will not`, `it's` -> `its`).
-- **Damerau-Levenshtein Distance**: Optimal string alignment detecting single-character transpositions (`teh` -> `the`, `caemra` -> `camera`) alongside insertions and deletions.
-- **Phonetic Hybrid (Metaphone + Soundex)**: Dual phonetic fingerprinting tolerates regional accents and silent English letters (`knight` -> `night`, `weather` -> `whether`).
-- **Sibling Prefix Disambiguation**: Prevents shorter commands (e.g., `"open"`) from prematurely executing when the user speaks longer composite phrases (e.g., `"open camera"`).
-
----
-
-## 5. Sub-Millisecond Gesture Capture & Replay Subsystem
-
-### 5.1 FloatService Physics & Window Management
-- **Edge Docking Physics**: Decelerates and smoothly snaps the bubble to the nearest screen edge upon release.
-- **Half-Dock Auto-Collapse**: Collapses into a subtle 55% opacity pill after 3.5s of inactivity to minimize screen obstruction.
-- **Safe Area & Cutout Inset Handling**: Automatically clamps bubble coordinates inside display safe zones, preventing placement under camera notches.
-- **Orientation Adaptation**: Handles configuration changes (`onConfigurationChanged`) by recalculating display bounds and clamping bubble coordinates.
-
-### 5.2 Pass-Through Touch Recording
-- **Batched Touch Extraction**: Collects all historical touch samples (`getHistoricalX/Y/EventTime`) with microsecond precision.
-- **Touch Slop Filtering**: Distinguishes between stationary taps, long holds, and deliberate swipes using a 12dp squared distance threshold.
-- **Zero Visual Lines**: Touches pass immediately through to underlying applications without drawing lines or dots on screen.
-
-### 5.3 Spline Smoothing & Multi-Stroke Continuation
-- **Catmull-Rom Splines**: Smooths erratic digitizer jitter while preserving recorded velocities and corner points.
-- **Duration Segmentation**: For gestures exceeding Android's `getMaxGestureDuration()`, strokes are automatically segmented using `StrokeDescription.continueStroke(...)` for unbroken continuous execution.
+Historic package name. After cleanup it holds only classes that other code uses (see `docs/STATUS.md`). The earlier
+"micro-kernel" (daemon, mesh, Vulkan, chaos engine and so on) was never started and has been removed.

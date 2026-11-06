@@ -1,5 +1,8 @@
 # SayDo — Ishonchlilik Roadmap
 
+> **Eslatma (2026-11-06):** joriy ish tartibi [PLAN.md](PLAN.md) da, holat [STATUS.md](STATUS.md) da. Quyidagi eski bosqichlardan
+> ba'zilari endi to'g'ri kelmaydi va o'z joyida belgilangan. `kernel/` ning ishlatilmagan qismi o'chirildi (qolgani STATUS.md da).
+
 **Maqsad:** foydalanuvchi aytgan buyruq **eshitilsin** va yozilgan harakatlar **xuddi o'zi qilgandek** bajarilsin.
 Qoida: *ishonchlilik funksiyadan muhimroq.* Yangi funksiya yo'q, avval mavjudi 99% ishlasin.
 
@@ -8,8 +11,8 @@ Qoida: *ishonchlilik funksiyadan muhimroq.* Yangi funksiya yo'q, avval mavjudi 9
 | Qatlam | Holat | Asosiy muammo |
 |---|---|---|
 | Ovoz | Beqaror | `SpeechRecognizer` doimiy tinglash uchun mo'ljallanmagan: sessiyalar orasida tanaffus (cooldown 1.8s), OEM o'ldirishi, tizim tovushi, faqat `en-US`. README "100% offline" deydi, kod esa online'ga o'tadi. |
-| Ijro | Beqaror | `GestureService.step()` open-loop: ekranni tekshirmaydi, xatodan keyin davom etadi, muvaffaqiyat mezoni noto'g'ri (`failures < list.size()`), anchor `g.x/g.y` ni doimiy o'zgartiradi. |
-| Kod | Shishgan | `kernel/` (Vulkan, chaos, mesh, "omega") asosiy yo'lga hech qanday foyda bermaydi, real qurilmada tekshirilmagan. |
+| Ijro | Beqaror | `GestureService.step()` open-loop: ekranni tekshirmaydi, xatodan keyin davom etadi, muvaffaqiyat mezoni noto'g'ri (`failures < list.size()`). (Avvalgi versiyada bu yerda "anchor `g.x/g.y` ni doimiy o'zgartiradi" deyilgan edi; bu noto'g'ri: `parse()` har ijroda yangi obyekt yaratadi.) |
+| Kod | Shishgan (eskirgan: ishlatilmagan `kernel/` qismi o'chirildi) | `kernel/` (Vulkan, chaos, mesh, "omega") asosiy yo'lga hech qanday foyda bermaydi, real qurilmada tekshirilmagan. |
 | Test | Yolg'on ishonch | Unit-testlar mock bilan o'tadi, lekin real telefonda ovoz va gesture sinalmagan. |
 
 ## Tamoyillar
@@ -29,7 +32,7 @@ Qoida: *ishonchlilik funksiyadan muhimroq.* Yangi funksiya yo'q, avval mavjudi 9
 - [x] **Protokol va 10 etalon makro ro'yxati:** [BENCHMARK.md](BENCHMARK.md).
 - [x] **README ni to'g'rilash:** isbotlanmagan iboralar olib tashlandi, ma'lum cheklovlar yozildi.
 - [ ] **Boshlang'ich o'lchov (qurilmada):** 10 etalon makroni yozish, 3 qurilmada ovoz va makro testini o'tkazish, jadvalni to'ldirish.
-- ~~`kernel/` ni build'dan chiqarish~~ → **Bosqich 5 ga ko'chirildi.** Sabab: `GestureService`, `VoiceService`, `FloatService`, `Gesture` kernel klasslariga bog'langan (`NodeAnchor`, `SmartGestureDispatcher`, `ParametricMatcher` va b.). Ularni hozir uzish o'lchovdan oldin xulq-atvorni o'zgartiradi. `SayDoKernel.start()` hech qayerda chaqirilmaydi, ya'ni daemon/mesh ishlamaydi.
+- ~~`kernel/` ni build'dan chiqarish~~ → **Bosqich 5 ga ko'chirildi, keyin ishlatilmagan qismi o'chirildi** (ishlatilganlari qoldi). Sabab: `GestureService`, `VoiceService`, `FloatService`, `Gesture` kernel klasslariga bog'langan (`NodeAnchor`, `SmartGestureDispatcher`, `ParametricMatcher` va b.). Ularni hozir uzish o'lchovdan oldin xulq-atvorni o'zgartiradi. `SayDoKernel.start()` hech qayerda chaqirilmaydi, ya'ni daemon/mesh ishlamaydi.
 
 **Tayyor mezoni:** boshlang'ich raqamlar jadvali (BENCHMARK.md) 2.9.4 uchun to'ldirilgan.
 
@@ -88,6 +91,8 @@ Foydalanuvchi shikoyati: 40–50 qadamlik makroda bitta xato hammasini buzadi.
 
 ## Bosqich 3 — Ovoz dvigateli (2–3 hafta)
 
+*Eslatma: `ERROR_CLIENT` tsikli keyin tuzatildi (sabab: o'z audio fokus so'rovi), shuning uchun "sessiyalar orasida tanaffus" muammosining bir qismi yopildi; tanish sifati hali o'lchanmagan.*
+
 Hozirgi `SpeechRecognizer` o'rniga **grammar-cheklangan offline tanish**.
 
 - [ ] **Prototip** (1 hafta, alohida branch): Vosk (kichik model, `grammar` bilan faqat foydalanuvchi triggerlari + `[unk]`). `AudioRecord` bilan mikrofon oqimi, foreground service (`microphone` turi).
@@ -113,10 +118,10 @@ Hozirgi `SpeechRecognizer` o'rniga **grammar-cheklangan offline tanish**.
 
 ## Bosqich 5 — Tozalash va sifat (1 hafta)
 
-- [ ] `experimental/` (ex-`kernel/`) ni, ishlatilmayotgan qismlarini o'chirish: kamroq kod = kamroq xato.
+- [x] `kernel/` ning ishlatilmayotgan qismlarini o'chirish (bajarildi; `experimental/` ga ko'chirish rejasi bekor).
 - [ ] Mock testlarni **instrumented testlarga** almashtirish (real Accessibility bilan, kamida emulyatorda).
 - [ ] Crash log + foydalanuvchi "xato haqida xabar" tugmasi (debug ekranidan yig'ish).
-- [ ] Hujjatlarni haqiqatga moslash (`ARCHITECTURE.md`, `RELIABILITY.md`, "Omega sertifikat" ni olib tashlash).
+- [x] Hujjatlarni haqiqatga moslash (`ARCHITECTURE.md`, `RELIABILITY.md`; "Omega sertifikat" olib tashlandi).
 
 ## Bosqich 6 — Beta (2 hafta)
 
