@@ -143,6 +143,14 @@ public final class NodeAnchor {
         return score;
     }
 
+    /**
+     * True if this anchor can ever be matched: the finder needs a score above 0.5, and an anchor
+     * with no id, no text and no description tops out at 0.3 even against itself.
+     */
+    public boolean canBeMatched() {
+        return matchScore(this) > 0.5f;
+    }
+
     public JSONObject toJson() throws JSONException {
         JSONObject obj = new JSONObject();
         if (!viewIdResourceName.isEmpty()) obj.put("id", viewIdResourceName);

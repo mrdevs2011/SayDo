@@ -409,10 +409,20 @@ public class GestureService extends AccessibilityService {
             // cur == null: window not readable right now; do not block on it.
         }
 
-        if (g.anchor != null && now < anchorDeadline && !anchorPresent(g.anchor)) {
-            // The view may still be loading; wait a little, then fall back to coordinates.
-            handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline, anchorDeadline), POLL_MS);
-            return;
+        if (stepAwaitStart == 0 || stepAwaitIndex != i) {
+            stepAwaitStart = now;
+            stepAwaitIndex = i;
+        }
+        if (usableAnchor(g.anchor) && now < anchorDeadline) {
+            long t0 = SystemClock.uptimeMillis();
+            boolean present = anchorPresent(g.anchor);
+            DebugLog.i("Play", "step " + (i + 1) + " anchor scan " + (SystemClock.uptimeMillis() - t0)
+                    + " ms present=" + present);
+            if (!present) {
+                // The view may still be loading; wait a little, then fall back to coordinates.
+                handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline, anchorDeadline), POLL_MS);
+                return;
+            }
         }
 
         perform(list, i, tok, failures, 0);
@@ -422,8 +432,12 @@ public class GestureService extends AccessibilityService {
         if (tok != token) return;
         final G g = list.get(i);
 
+        DebugLog.i("Play", "step " + (i + 1) + " ready after " + (SystemClock.uptimeMillis() - stepAwaitStart)
+                + " ms wait, anchor usable=" + usableAnchor(g.anchor));
+
         // Self-healing UI node anchor resolution
-        if (g.anchor != null) {
+        if (usableAnchor(g.anchor)) {
+            long r0 = SystemClock.uptimeMillis();
             AccessibilityNodeInfo root = null;
             try {
                 root = getRootInActiveWindow();
@@ -436,6 +450,8 @@ public class GestureService extends AccessibilityService {
                     Gesture domainGesture = new Gesture(g.type, g.action, g.x, g.y, g.st, g.et, g.dur, g.pts, g.anchor, g.varSlot, g.textToInject);
                     SmartGestureDispatcher.ResolveResult res =
                             SmartGestureDispatcher.resolveAndExecute(root, domainGesture, w, h, null);
+                    DebugLog.i("Play", "step " + (i + 1) + " resolve " + (SystemClock.uptimeMillis() - r0)
+                            + " ms found=" + res.foundAnchor + " direct=" + res.handledDirectly);
                     if (res.handledDirectly) {
                         DebugLog.i("Play", "step " + (i + 1) + " clicked node directly");
                         handler.postDelayed(() -> step(list, i + 1, tok, failures), 60);
@@ -624,6 +640,18 @@ public class GestureService extends AccessibilityService {
             done.accept(false);
             return false;
         }
+    }
+
+    private long stepAwaitStart = 0;
+    private int stepAwaitIndex = -1;
+
+    /**
+     * An anchor only helps if it can ever be found: the matcher needs a score above 0.5, and an
+     * anchor with no id, no text and no description tops out at 0.3. Waiting for such an anchor
+     * (and scanning the whole screen for it) only slowed every step down.
+     */
+    static boolean usableAnchor(NodeAnchor a) {
+        return a != null && a.canBeMatched();
     }
 
     private void recordFail(int stepIndex, String reason) {
