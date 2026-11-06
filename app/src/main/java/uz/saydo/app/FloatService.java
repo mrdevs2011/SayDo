@@ -60,6 +60,7 @@ public class FloatService extends Service {
     static final String ACTION_START_REC = "uz.saydo.app.FLOAT_START_REC";
     static final String ACTION_REBUILD = "uz.saydo.app.FLOAT_REBUILD";
     static final String EXTRA_TRIGGER = "trigger";
+    static final String EXTRA_RAW = "raw";
 
     public static volatile boolean showing = false;
     public static volatile boolean recording = false;
@@ -103,6 +104,10 @@ public class FloatService extends Service {
     private long downAt;
 
     private String pendingTrigger = "";
+    /** True: record raw touches with the overlay (games, custom-drawn screens); false: record from accessibility events. */
+    private boolean rawMode = false;
+    private boolean pendingRaw = false;
+    private EventRecorder evRec;
     private boolean lockedRec = false;
     private final List<JSONObject> gestures = new ArrayList<>();
     private long recStartElapsed;
@@ -186,6 +191,7 @@ public class FloatService extends Service {
         if (ACTION_START_REC.equals(action)) {
             String t = intent.getStringExtra(EXTRA_TRIGGER);
             if (t != null && !t.trim().isEmpty()) {
+                pendingRaw = intent.getBooleanExtra(EXTRA_RAW, false);
                 if (bubble == null) addBubble();
                 startRecordingFlow(t.trim());
             }
@@ -582,9 +588,21 @@ public class FloatService extends Service {
         curStroke = null;
         curPath = null;
         recStartElapsed = SystemClock.uptimeMillis();
+        // From the lock screen no app events exist, so that is always raw.
+        rawMode = pendingRaw || lockedRec;
+        pendingRaw = false;
         recording = true;
         refreshBubble();
-        addRecordLayer();
+        if (rawMode) {
+            addRecordLayer();
+        } else {
+            GestureService gs = GestureService.instance;
+            evRec = new EventRecorder(gs);
+            evRec.start();
+            GestureService.recorder = evRec;
+            gs.setRecordingEvents(true);
+        }
+        DebugLog.i("Rec", "start mode=" + (rawMode ? "raw" : "events"));
         toast("Recording: " + trigger);
     }
 
@@ -592,16 +610,29 @@ public class FloatService extends Service {
         if (!recording && recordView == null) return;
         finishStroke(false, false);
         recording = false;
+        List<Gesture> eventSteps = null;
+        if (evRec != null) {
+            GestureService.recorder = null;
+            eventSteps = evRec.stop();
+            evRec = null;
+            GestureService gs = GestureService.instance;
+            if (gs != null) gs.setRecordingEvents(false);
+        }
         removeRecordLayer();
         refreshBubble();
-        DebugLog.i("Rec", "stop save=" + save + " strokes=" + gestures.size() + " trigger=" + pendingTrigger);
+        int count = eventSteps != null ? eventSteps.size() : gestures.size();
+        DebugLog.i("Rec", "stop save=" + save + " strokes=" + count + " trigger=" + pendingTrigger);
 
-        if (save && !gestures.isEmpty() && !pendingTrigger.isEmpty()) {
+        if (save && count > 0 && !pendingTrigger.isEmpty()) {
             try {
                 List<Gesture> domainGestures = new ArrayList<>();
-                for (JSONObject g : gestures) {
-                    Gesture dg = Gesture.fromJson(g);
-                    if (dg != null) domainGestures.add(dg);
+                if (eventSteps != null) {
+                    domainGestures.addAll(eventSteps);
+                } else {
+                    for (JSONObject g : gestures) {
+                        Gesture dg = Gesture.fromJson(g);
+                        if (dg != null) domainGestures.add(dg);
+                    }
                 }
                 long dur = 0;
                 if (!domainGestures.isEmpty()) {
@@ -993,6 +1024,15 @@ public class FloatService extends Service {
         card.addView(triggerInput, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        final android.widget.CheckBox rawBox = new android.widget.CheckBox(this);
+        rawBox.setText("Raw touches (games, custom screens)");
+        rawBox.setTextColor(Color.parseColor("#A8C0E8"));
+        rawBox.setTextSize(13);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rlp.topMargin = Math.round(8 * d);
+        card.addView(rawBox, rlp);
+
         Button go = new Button(this);
         go.setText("Start recording");
         go.setAllCaps(false);
@@ -1055,7 +1095,9 @@ public class FloatService extends Service {
                 toast("Already used: \"" + phrase + "\"");
                 return;
             }
+            boolean raw = rawBox.isChecked();
             hideTriggerPanel();
+            pendingRaw = raw;
             startRecordingFlow(phrase);
         };
         go.setOnClickListener(v -> submit.run());

@@ -63,6 +63,22 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 10. Accessibility via ADB right after install sometimes does not stick; setting it again works.
 11. The on-screen "stopped on a wrong screen" message was never captured.
 
+
+## Record and replay: how it worked before 2.15.0, and where it failed
+
+Read from the code, then checked on the phone (counts in the next section).
+
+| Thing | Recorded as | Replayed as | Where it can fail |
+|---|---|---|---|
+| Tap | A full-screen accessibility overlay (`FloatService.RecordView`) swallows the touch; after the finger is up it makes the overlay untouchable, waits 70 ms (`PASS_SETTLE_MS`) and re-injects the tap with `dispatchGesture`. Anchor = deepest node at the point in the active window | Wait for the app package (up to 8 s) and for the anchor (2.5 s), then `ACTION_CLICK` on the node if it is clickable, else a 20 ms tap at the node's current centre, else at the recorded point | Every tap reaches the app late (about 130 ms or more). A node that is not clickable (list text) falls back to coordinates. Anchors with no id/text/description never match |
+| Keyboard key tap | Same as a tap; IME windows are not the active window, so the anchor is a node of the app behind the keyboard or missing | Raw coordinates | Only works if the keyboard is the same one, same size and already visible. Nothing waits for it. The text is never stored as text (`TYPE_TEXT` existed but nothing wrote it) |
+| Text typed by `input text` / hardware keys | Not recorded at all (no touch) | Not replayed | The step is simply missing, so the next tap hits the wrong thing |
+| Edge swipe (back/home/recents) | The system cancels the overlay's touch (ACTION_CANCEL); `edgeAction` turns it into a `global` step with fixed thresholds (32 dp from the sides = back, 64 dp from the bottom = home, 450 ms hold = recents) | `performGlobalAction` | Any other way of swiping (starting 40 dp from the edge, a slow swipe that does not cancel) is recorded as a plain swipe and replays as a swipe inside the app |
+| Scroll / swipe | The swipe is swallowed and re-injected after the finger is up, so the list does not follow the finger. Path stored as normalised points | The path is resampled, smoothed and dispatched | The result depends on the list position and on fling momentum, so a following tap at fixed coordinates can hit another item. Nothing scrolls "until the target is visible" |
+| Dialogs and popups | Taps are recorded like any other | Same | A dialog that appears late is not waited for beyond the 2.5 s anchor wait; then the tap goes to coordinates |
+| Slow screens | Gaps recorded; pause capped at 3 s | Fixed wait, then the 2.5 s anchor wait | After 2.5 s the step taps coordinates anyway instead of stopping |
+| Rotation | Normalised coordinates | Same | Not tested |
+
 ## Cleanup check
 
 Removed unused code under `kernel/` (daemon, mesh, Vulkan pipeline, chaos engine, vault and others; `SayDoKernel.start()` was never called) and the docs that described it. Kept the classes the app uses: `NodeAnchor`, `SmartGestureDispatcher`, `MacroStudioActivity`, `AppShortcutManager`, `ExecutionHudOverlay`, `SayDoTileService`, `ParametricMatcher`, `MultilingualMatcher`, `ContextMemory`. Compile check, CI build and CI unit tests are the evidence; the phone smoke test result is in the final report (not repeated here unless recorded in a later edit).

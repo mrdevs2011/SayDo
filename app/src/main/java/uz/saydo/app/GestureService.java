@@ -59,7 +59,7 @@ public class GestureService extends AccessibilityService {
     private static final long MIN_HOLD_MS = 380;
     private static final long MIN_SWIPE_MS = 20;
 
-    private static final class G {
+    static final class G {
         String type = "tap";
         String action = "";
         double x, y;
@@ -69,6 +69,9 @@ public class GestureService extends AccessibilityService {
         String varSlot = "";
         String textToInject = "";
         String pkg = "";
+        String winCls = "";
+        int scrollDx, scrollDy;
+        boolean sem;
     }
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -94,6 +97,17 @@ public class GestureService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         hud = new ExecutionHudOverlay(this);
+        sem = new SemPlayer(this, handler);
+        // View ids are only reported to a service that asks for them; anchors are stronger with ids.
+        try {
+            android.accessibilityservice.AccessibilityServiceInfo info = getServiceInfo();
+            if (info != null && (info.flags & android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS) == 0) {
+                info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
+                setServiceInfo(info);
+            }
+        } catch (Throwable t) {
+            DebugLog.w("Rec", "could not add report-view-ids flag: " + t);
+        }
         hud.setAbortCallback(this::cancel);
         FloatService.rebuild(getApplicationContext());
         McpService.startIfEnabled(getApplicationContext());
@@ -125,10 +139,72 @@ public class GestureService extends AccessibilityService {
         super.onDestroy();
     }
 
+    /** Receives the events while a recording from accessibility events is on (see EventRecorder). */
+    static volatile EventRecorder recorder;
+    volatile long lastWindowChangeAt;
+    private SemPlayer sem;
+
+    /** Turns the extra event types on only while recording, so idle cost stays as before. */
+    void setRecordingEvents(boolean on) {
+        try {
+            android.accessibilityservice.AccessibilityServiceInfo info = getServiceInfo();
+            if (info == null) return;
+            int add = AccessibilityEvent.TYPE_VIEW_CLICKED | AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
+                    | AccessibilityEvent.TYPE_VIEW_SCROLLED | AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED;
+            if (on) {
+                info.eventTypes |= add;
+                info.notificationTimeout = 0;
+            } else {
+                info.eventTypes &= ~add;
+                info.notificationTimeout = 200;
+            }
+            setServiceInfo(info);
+            DebugLog.i("Rec", "event types " + (on ? "on" : "off"));
+        } catch (Throwable t) {
+            DebugLog.e("Rec", "setServiceInfo failed: " + t);
+        }
+    }
+
+    Set<String> ignoredPackagesPublic() {
+        return ignoredPackages();
+    }
+
+    /** Roots of the windows of one app (dialogs and popups too), top first; falls back to the active window. */
+    List<AccessibilityNodeInfo> appRoots(String pkg) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        try {
+            List<android.view.accessibility.AccessibilityWindowInfo> ws =
+                    new ArrayList<>(getWindows());
+            Collections.sort(ws, (a, b) -> b.getLayer() - a.getLayer());
+            for (android.view.accessibility.AccessibilityWindowInfo w : ws) {
+                int t = w.getType();
+                if (t == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                        || t == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+                AccessibilityNodeInfo r = w.getRoot();
+                if (r == null) continue;
+                CharSequence cp = r.getPackageName();
+                boolean mine = cp != null && cp.toString().equals(getPackageName());
+                if (!mine && (pkg == null || pkg.isEmpty() || (cp != null && pkg.equals(cp.toString())))) out.add(r);
+                else {
+                    try { r.recycle(); } catch (Throwable ignoredErr) {}
+                }
+            }
+        } catch (Throwable ignoredErr) {
+        }
+        if (out.isEmpty() && (pkg == null || pkg.isEmpty())) {
+            AccessibilityNodeInfo r = getRootInActiveWindow();
+            if (r != null) out.add(r);
+        }
+        return out;
+    }
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
+        EventRecorder rec = recorder;
+        if (rec != null) rec.onEvent(event);
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastWindowChangeAt = SystemClock.uptimeMillis();
             CharSequence p = event.getPackageName();
             if (p != null) {
                 String pkg = p.toString();
@@ -312,8 +388,28 @@ public class GestureService extends AccessibilityService {
         firstFail = -1;
         runFailures = 0;
         if (hud != null) hud.show(currentMacroName, 1, list.size());
+        openFirstApp(list.get(0));
         step(list, 0, tok, 0);
         return true;
+    }
+
+    /**
+     * A macro whose first step is inside an app (not on the launcher) used to need that app to be
+     * opened by hand within 8 s. Open it here, as the launcher icon would.
+     */
+    private void openFirstApp(G first) {
+        try {
+            String pkg = first.pkg;
+            if (pkg.isEmpty() || launcherPackages().contains(pkg) || pkg.equals(getPackageName())) return;
+            if (pkg.equals(foregroundAppPkg())) return;
+            Intent li = getPackageManager().getLaunchIntentForPackage(pkg);
+            if (li == null) return;
+            li.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            startActivity(li);
+            DebugLog.i("Play", "opening first app " + pkg);
+        } catch (Throwable t) {
+            DebugLog.w("Play", "could not open first app: " + t);
+        }
     }
 
     boolean injectNow(JSONObject stroke, final Runnable after) {
@@ -337,6 +433,8 @@ public class GestureService extends AccessibilityService {
     private void finish(int tok, boolean ok, int failures) {
         if (tok != token) return;
         Metrics.runEnd(runId, ok, failures, firstFail, SystemClock.uptimeMillis() - runStartedAt, false);
+        DebugLog.i("Play", "finished ok=" + ok + " failures=" + failures + " in "
+                + (SystemClock.uptimeMillis() - runStartedAt) + " ms");
         running = false;
         if (hud != null) hud.dismiss();
         Done d = current;
@@ -370,6 +468,8 @@ public class GestureService extends AccessibilityService {
         long recordedGap = (i == 0) ? Math.min(g.st, 60) : Math.max(0, g.st - list.get(i - 1).et);
         long gap = (i == 0) ? recordedGap
                 : uz.saydo.app.util.PlaybackGap.effective(recordedGap, !g.pkg.isEmpty());
+        // Steps recorded from events wait for their view anyway: a long recorded pause is thinking time.
+        if (g.sem && i > 0) gap = Math.min(recordedGap, SEM_GAP_CAP_MS);
         if (gap != recordedGap) {
             DebugLog.i("Play", "step " + (i + 1) + " pause capped " + recordedGap + " -> " + gap + " ms");
         }
@@ -381,14 +481,54 @@ public class GestureService extends AccessibilityService {
                 int act = "home".equals(g.action) ? GLOBAL_ACTION_HOME
                         : "recents".equals(g.action) ? GLOBAL_ACTION_RECENTS
                         : GLOBAL_ACTION_BACK;
+                final long actAt = SystemClock.uptimeMillis();
                 final boolean okGlobal = performGlobalAction(act);
                 if (!okGlobal) recordFail(i, "global_" + g.action);
-                handler.postDelayed(() -> step(list, i + 1, tok, okGlobal ? failures : failures + 1), 250);
+                DebugLog.i("Play", "step " + (i + 1) + " global " + g.action + " ok=" + okGlobal);
+                // Wait for the screen change this caused, so the next step does not look at the old screen.
+                handler.postDelayed(new Runnable() {
+                    @Override public void run() {
+                        if (tok != token) return;
+                        long el = SystemClock.uptimeMillis() - actAt;
+                        if (g.sem && lastWindowChangeAt < actAt && el < 900) {
+                            handler.postDelayed(this, 60);
+                            return;
+                        }
+                        step(list, i + 1, tok, okGlobal ? failures : failures + 1);
+                    }
+                }, 250);
+                return;
+            }
+            if (g.sem) {
+                semStep(list, i, tok, failures);
                 return;
             }
             long now = SystemClock.uptimeMillis();
             awaitScreen(list, i, tok, failures, now + SCREEN_WAIT_MS, now + ANCHOR_WAIT_MS);
         }, gap);
+    }
+
+    private static final long SEM_GAP_CAP_MS = 1200;
+
+    /** A step recorded from accessibility events: act on the view itself, see SemPlayer. */
+    private void semStep(final List<G> list, final int i, final int tok, final int failures) {
+        final G g = list.get(i);
+        // The next real target (scroll steps are skipped over): used to skip a scroll that is not needed.
+        G nx = null;
+        for (int j = i + 1; j < list.size(); j++) {
+            if (!"scroll".equals(list.get(j).type)) { nx = list.get(j); break; }
+        }
+        final G next = nx;
+        final G prev = i > 0 ? list.get(i - 1) : null;
+        sem.run(g, next, prev, () -> tok == token, (ok, why) -> {
+            if (tok != token) return;
+            if (ok) {
+                step(list, i + 1, tok, failures);
+            } else {
+                recordFail(i, "sem_" + g.type);
+                stopRun(tok, i, failures + 1, why);
+            }
+        }, i);
     }
 
     private String lastPollLog = "";
@@ -795,6 +935,10 @@ public class GestureService extends AccessibilityService {
             g.varSlot = o.optString("var", "");
             g.textToInject = o.optString("txt", "");
             g.pkg = o.optString("pkg", "");
+            g.winCls = o.optString("wcls", "");
+            g.scrollDx = o.optInt("sdx", 0);
+            g.scrollDy = o.optInt("sdy", 0);
+            g.sem = o.optBoolean("sem", false);
             out.add(g);
         }
         Collections.sort(out, Comparator.comparingLong(a -> a.st));
