@@ -95,55 +95,109 @@ public final class SmartGestureDispatcher {
 
     /**
      * Traverses the Accessibility tree via BFS to find the highest-confidence matching node.
+     * Invisible subtrees are skipped. Ties are broken by closeness to the recorded position.
+     * The parent class is passed down, so no per-node parent lookup (one IPC each) is needed.
      */
     public static AccessibilityNodeInfo findMatchingNode(AccessibilityNodeInfo root, NodeAnchor anchor) {
         if (root == null || anchor == null) return null;
 
-        Queue<AccessibilityNodeInfo> queue = new LinkedList<>();
-        queue.offer(root);
+        java.util.ArrayDeque<AccessibilityNodeInfo> queue = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<Integer> parentHash = new java.util.ArrayDeque<>();
+        queue.add(root);
+        parentHash.add(0);
 
         AccessibilityNodeInfo bestNode = null;
         float bestScore = 0.50f; // Minimum acceptance threshold
+        final boolean wantChild = !anchor.getChildText().isEmpty();
+        Rect b = new Rect();
 
         while (!queue.isEmpty()) {
             AccessibilityNodeInfo current = queue.poll();
+            int pHash = parentHash.poll();
             if (current == null) continue;
+            try {
+                if (current != root && !current.isVisibleToUser()) continue;
+                CharSequence cls = current.getClassName();
+                CharSequence txt = current.getText();
+                CharSequence desc = current.getContentDescription();
+                String id = current.getViewIdResourceName();
+                String childText = "";
+                if (wantChild && current.isClickable()
+                        && (txt == null || txt.length() == 0) && (desc == null || desc.length() == 0)) {
+                    childText = firstLabel(current, 3);
+                }
+                current.getBoundsInScreen(b);
+                NodeAnchor cand = new NodeAnchor(id, cls != null ? cls.toString() : "",
+                        txt != null ? txt.toString() : "", desc != null ? desc.toString() : "",
+                        b.left, b.top, b.right, b.bottom, current.isClickable(), current.isScrollable(),
+                        current.isEditable(), pHash, childText);
+                float score = anchor.matchScore(cand);
+                if (score > 0.5f) score += 0.1f * anchor.proximity(b.left, b.top, b.right, b.bottom);
 
-            NodeAnchor currentAnchor = extractAnchor(current);
-            float score = anchor.matchScore(currentAnchor);
+                if (score > bestScore) {
+                    if (bestNode != null && bestNode != root) recycleQuietly(bestNode);
+                    bestScore = score;
+                    bestNode = AccessibilityNodeInfo.obtain(current);
+                    if (score >= 1.05f) break; // exact match at the recorded place
+                }
 
-            if (score > bestScore) {
-                if (bestNode != null && bestNode != root) {
-                    try {
-                        bestNode.recycle();
-                    } catch (Throwable ignored) {
+                int childCount = current.getChildCount();
+                int myHash = cls != null ? cls.toString().hashCode() : 0;
+                for (int i = 0; i < childCount; i++) {
+                    AccessibilityNodeInfo child = current.getChild(i);
+                    if (child != null) {
+                        queue.add(child);
+                        parentHash.add(myHash);
                     }
                 }
-                bestScore = score;
-                bestNode = AccessibilityNodeInfo.obtain(current);
-
-                // Early exit on near-perfect match
-                if (score >= 0.85f) {
-                    break;
-                }
-            }
-
-            int childCount = current.getChildCount();
-            for (int i = 0; i < childCount; i++) {
-                AccessibilityNodeInfo child = current.getChild(i);
-                if (child != null) {
-                    queue.offer(child);
-                }
+            } finally {
+                if (current != root && current != bestNode) recycleQuietly(current);
             }
         }
-
+        while (!queue.isEmpty()) {
+            AccessibilityNodeInfo n = queue.poll();
+            if (n != null && n != root) recycleQuietly(n);
+        }
         return bestNode;
+    }
+
+    private static void recycleQuietly(AccessibilityNodeInfo n) {
+        try {
+            n.recycle();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** First non-empty text or description among the descendants, up to a depth; "" if none. */
+    public static String firstLabel(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth <= 0) return "";
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo c = node.getChild(i);
+            if (c == null) continue;
+            try {
+                CharSequence t = c.getText();
+                if (t != null && t.length() > 0) return t.toString();
+                CharSequence d = c.getContentDescription();
+                if (d != null && d.length() > 0) return d.toString();
+                String deeper = firstLabel(c, depth - 1);
+                if (!deeper.isEmpty()) return deeper;
+            } finally {
+                recycleQuietly(c);
+            }
+        }
+        return "";
     }
 
     /**
      * Extracts a NodeAnchor fingerprint from an active AccessibilityNodeInfo.
      */
     public static NodeAnchor extractAnchor(AccessibilityNodeInfo node) {
+        return extractAnchor(node, false);
+    }
+
+    /** As above; with withChild a label-less clickable container is also known by its first labelled child. */
+    public static NodeAnchor extractAnchor(AccessibilityNodeInfo node, boolean withChild) {
         if (node == null) return null;
         Rect bounds = new Rect();
         node.getBoundsInScreen(bounds);
@@ -160,10 +214,11 @@ public final class SmartGestureDispatcher {
             if (pCls != null) {
                 ancestryHash = pCls.toString().hashCode();
             }
-            try {
-                parent.recycle();
-            } catch (Throwable ignored) {
-            }
+            recycleQuietly(parent);
+        }
+        String childText = "";
+        if (withChild && (txt == null || txt.length() == 0) && (desc == null || desc.length() == 0)) {
+            childText = firstLabel(node, 3);
         }
 
         return new NodeAnchor(
@@ -178,7 +233,8 @@ public final class SmartGestureDispatcher {
                 node.isClickable(),
                 node.isScrollable(),
                 node.isEditable(),
-                ancestryHash
+                ancestryHash,
+                childText
         );
     }
 }

@@ -23,6 +23,8 @@ public final class NodeAnchor {
     private final boolean scrollable;
     private final boolean editable;
     private final int ancestryHash;
+    /** Text of the first labelled descendant, for clickable containers with no text of their own ("" if none). */
+    private final String childText;
 
     public NodeAnchor(String viewIdResourceName,
                       String className,
@@ -36,6 +38,24 @@ public final class NodeAnchor {
                       boolean scrollable,
                       boolean editable,
                       int ancestryHash) {
+        this(viewIdResourceName, className, text, contentDescription, left, top, right, bottom,
+                clickable, scrollable, editable, ancestryHash, "");
+    }
+
+    public NodeAnchor(String viewIdResourceName,
+                      String className,
+                      String text,
+                      String contentDescription,
+                      int left,
+                      int top,
+                      int right,
+                      int bottom,
+                      boolean clickable,
+                      boolean scrollable,
+                      boolean editable,
+                      int ancestryHash,
+                      String childText) {
+        this.childText = childText != null ? childText : "";
         this.viewIdResourceName = viewIdResourceName != null ? viewIdResourceName : "";
         this.className = className != null ? className : "";
         this.text = text != null ? text : "";
@@ -102,6 +122,10 @@ public final class NodeAnchor {
         return editable;
     }
 
+    public String getChildText() {
+        return childText;
+    }
+
     public int getAncestryHash() {
         return ancestryHash;
     }
@@ -125,6 +149,12 @@ public final class NodeAnchor {
             score += 0.30f;
         }
 
+        // A container with no label of its own is known by its first labelled child (30 points)
+        if (!childText.isEmpty() && text.isEmpty() && contentDescription.isEmpty()
+                && childText.equalsIgnoreCase(other.childText)) {
+            score += 0.30f;
+        }
+
         // Class Name match (15 points)
         if (!className.isEmpty() && className.equals(other.className)) {
             score += 0.15f;
@@ -141,6 +171,14 @@ public final class NodeAnchor {
         }
 
         return score;
+    }
+
+    /** 1.0 at the recorded position, falling to 0 about one screen diagonal away (about 2500 px). */
+    public float proximity(int l, int t, int r, int b) {
+        double dx = (l + r) / 2.0 - getCenterX();
+        double dy = (t + b) / 2.0 - getCenterY();
+        double d = Math.sqrt(dx * dx + dy * dy);
+        return (float) Math.max(0.0, 1.0 - d / 2500.0);
     }
 
     /**
@@ -165,6 +203,7 @@ public final class NodeAnchor {
         if (scrollable) obj.put("scr", true);
         if (editable) obj.put("edt", true);
         if (ancestryHash != 0) obj.put("anc", ancestryHash);
+        if (!childText.isEmpty()) obj.put("ctx", childText);
         return obj;
     }
 
@@ -182,7 +221,8 @@ public final class NodeAnchor {
                 obj.optBoolean("clk", false),
                 obj.optBoolean("scr", false),
                 obj.optBoolean("edt", false),
-                obj.optInt("anc", 0)
+                obj.optInt("anc", 0),
+                obj.optString("ctx", "")
         );
     }
 
@@ -199,6 +239,7 @@ public final class NodeAnchor {
                 scrollable == that.scrollable &&
                 editable == that.editable &&
                 ancestryHash == that.ancestryHash &&
+                Objects.equals(childText, that.childText) &&
                 Objects.equals(viewIdResourceName, that.viewIdResourceName) &&
                 Objects.equals(className, that.className) &&
                 Objects.equals(text, that.text) &&
@@ -208,6 +249,6 @@ public final class NodeAnchor {
     @Override
     public int hashCode() {
         return Objects.hash(viewIdResourceName, className, text, contentDescription,
-                left, top, right, bottom, clickable, scrollable, editable, ancestryHash);
+                left, top, right, bottom, clickable, scrollable, editable, ancestryHash, childText);
     }
 }
