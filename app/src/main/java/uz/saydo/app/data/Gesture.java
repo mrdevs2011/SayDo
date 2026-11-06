@@ -24,6 +24,8 @@ public final class Gesture implements Serializable {
     public static final String TYPE_SWIPE = "swipe";
     public static final String TYPE_GLOBAL = "global";
     public static final String TYPE_TEXT = "text";
+    /** Scroll of a list recorded from accessibility events (dx, dy in px; dy > 0 = content moved up). */
+    public static final String TYPE_SCROLL = "scroll";
 
     public final String type;
     public final String action;
@@ -38,6 +40,13 @@ public final class Gesture implements Serializable {
     public final String textToInject;
     /** App package the touch was recorded in ("" = unknown; playback is then time-based). */
     public final String screenPkg;
+    /** Window class (activity or dialog) the step was recorded in; "" = unknown. Soft hint only. */
+    public final String winCls;
+    /** Scroll amount in px for TYPE_SCROLL. */
+    public final int scrollDx;
+    public final int scrollDy;
+    /** True when recorded from accessibility events (a view was clicked), not from raw touches. */
+    public final boolean semantic;
 
     public Gesture(String type, String action, double x, double y,
                    long startTime, long endTime, long duration, List<TouchPoint> points) {
@@ -53,6 +62,18 @@ public final class Gesture implements Serializable {
     public Gesture(String type, String action, double x, double y,
                    long startTime, long endTime, long duration, List<TouchPoint> points,
                    NodeAnchor anchor, String variableSlot, String textToInject, String screenPkg) {
+        this(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, textToInject,
+                screenPkg, "", 0, 0, false);
+    }
+
+    public Gesture(String type, String action, double x, double y,
+                   long startTime, long endTime, long duration, List<TouchPoint> points,
+                   NodeAnchor anchor, String variableSlot, String textToInject, String screenPkg,
+                   String winCls, int scrollDx, int scrollDy, boolean semantic) {
+        this.winCls = winCls != null ? winCls.trim() : "";
+        this.scrollDx = scrollDx;
+        this.scrollDy = scrollDy;
+        this.semantic = semantic;
         this.screenPkg = screenPkg != null ? screenPkg.trim() : "";
         this.type = (type != null && !type.trim().isEmpty()) ? type.trim().toLowerCase() : TYPE_TAP;
         this.action = (action != null) ? action.trim().toLowerCase() : "";
@@ -113,6 +134,17 @@ public final class Gesture implements Serializable {
         return new Gesture(TYPE_SWIPE, "", startX, startY, startTime, endTime, dur, points, null, "", "");
     }
 
+    /** Step recorded from an accessibility event: a click, long click, text entry or scroll on a node. */
+    public static Gesture createSemantic(String type, double x, double y, long startTime, long endTime,
+                                         NodeAnchor anchor, String text, String pkg, String winCls,
+                                         int scrollDx, int scrollDy) {
+        List<TouchPoint> pts = new ArrayList<>(1);
+        pts.add(new TouchPoint(x, y, startTime));
+        long dur = TYPE_HOLD.equals(type) ? Math.max(380, endTime - startTime) : 20;
+        return new Gesture(type, "", x, y, startTime, Math.max(startTime + dur, endTime), dur, pts,
+                anchor, "", text, pkg, winCls, scrollDx, scrollDy, true);
+    }
+
     public static Gesture createGlobal(String action, long startTime) {
         return new Gesture(TYPE_GLOBAL, action, 0.5, 0.5, startTime, startTime + 100, 100, Collections.emptyList(), null, "", "");
     }
@@ -122,15 +154,15 @@ public final class Gesture implements Serializable {
     }
 
     public Gesture withAnchor(NodeAnchor newAnchor) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, newAnchor, variableSlot, textToInject, screenPkg);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, newAnchor, variableSlot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic);
     }
 
     public Gesture withVariableSlot(String slot) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, slot, textToInject, screenPkg);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, slot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic);
     }
 
     public Gesture withText(String text) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, text, screenPkg);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, text, screenPkg, winCls, scrollDx, scrollDy, semantic);
     }
 
     public JSONObject toJson() {
@@ -165,6 +197,10 @@ public final class Gesture implements Serializable {
             if (!screenPkg.isEmpty()) {
                 obj.put("pkg", screenPkg);
             }
+            if (!winCls.isEmpty()) obj.put("wcls", winCls);
+            if (scrollDx != 0) obj.put("sdx", scrollDx);
+            if (scrollDy != 0) obj.put("sdy", scrollDy);
+            if (semantic) obj.put("sem", true);
         } catch (JSONException ignored) {
         }
         return obj;
@@ -203,7 +239,8 @@ public final class Gesture implements Serializable {
         String txt = obj.optString("txt", "");
         String pkg = obj.optString("pkg", "");
 
-        return new Gesture(type, action, x, y, st, et, dur, pointsList, anchor, varSlot, txt, pkg);
+        return new Gesture(type, action, x, y, st, et, dur, pointsList, anchor, varSlot, txt, pkg,
+                obj.optString("wcls", ""), obj.optInt("sdx", 0), obj.optInt("sdy", 0), obj.optBoolean("sem", false));
     }
 
     @Override
