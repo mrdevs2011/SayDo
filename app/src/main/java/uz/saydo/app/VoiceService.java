@@ -122,7 +122,6 @@ public class VoiceService extends Service implements
     private PowerManager.WakeLock wakeLock;
     private SpeechRecognizer recognizer;
     private AudioManager audioManager;
-    private AudioFocusRequest audioFocusRequest;
 
     private boolean destroyed = false;
     private int consecutiveErrors = 0;
@@ -175,7 +174,6 @@ public class VoiceService extends Service implements
         sInstance = this;
         createNotificationChannel();
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        setupAudioFocus();
         registerScreenReceiver();
 
         // Reactive repository subscriptions
@@ -267,7 +265,6 @@ public class VoiceService extends Service implements
         endGateSession();
         gate.setCallback(null);
         gate.stop();
-        abandonAudioFocus();
         unregisterScreenReceiver();
         releaseWakeLock();
 
@@ -436,6 +433,12 @@ public class VoiceService extends Service implements
         if (FloatService.recording) {
             gate.disarm();
             scheduleListen(600);
+            return;
+        }
+        if (inCallOrRinging()) {
+            gate.stop();
+            updateNotification("Paused during a call");
+            scheduleListen(2000);
             return;
         }
         if (cachedTriggers.isEmpty()) {
@@ -1051,56 +1054,24 @@ public class VoiceService extends Service implements
         if (state != State.EXECUTING_MACRO) scheduleListen(300);
     }
 
-    // ------------------------------------------------------------- Audio Focus Handling
+    // ------------------------------------------------------------- Phone call detection
 
-    private void setupAudioFocus() {
-        if (audioManager == null) return;
-        if (Build.VERSION.SDK_INT >= 26) {
-            AudioAttributes playbackAttributes = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build();
-            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                    .setAudioAttributes(playbackAttributes)
-                    .setAcceptsDelayedFocusGain(true)
-                    .setOnAudioFocusChangeListener(this::onAudioFocusChanged)
-                    .build();
-            audioManager.requestAudioFocus(audioFocusRequest);
-        } else {
-            audioManager.requestAudioFocus(
-                    this::onAudioFocusChanged,
-                    AudioManager.STREAM_VOICE_CALL,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
-        }
-    }
-
-    private void onAudioFocusChanged(int focusChange) {
-        if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
-            focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-            // Incoming phone call or media takeover -> pause gracefully
-            callPaused = true;
-            cancelWatchdog();
-            endGateSession();
-            gate.stop();
-            if (recognizer != null) {
-                try { recognizer.cancel(); } catch (Throwable ignored) {}
-            }
-            transitionTo(State.COOLDOWN);
-            updateNotification("Microphone paused for call/audio");
-        } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
-            if (callPaused) {
-                callPaused = false;
-                scheduleListen(500);
-            }
-        }
-    }
-
-    private void abandonAudioFocus() {
-        if (audioManager == null) return;
-        if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
-            audioManager.abandonAudioFocusRequest(audioFocusRequest);
-        } else {
-            audioManager.abandonAudioFocus(this::onAudioFocusChanged);
+    /**
+     * SayDo used to hold audio focus and treat AUDIOFOCUS_LOSS_TRANSIENT as "a call started". But the
+     * system recognizer takes audio focus itself every time startListening() runs, so that loss
+     * arrived within a few ms of every start. The handler then cancelled the session (ERROR_CLIENT)
+     * and the cycle repeated about once per second even in silence. Now there is no focus request;
+     * a call is detected from the audio mode when the next session would start.
+     */
+    private boolean inCallOrRinging() {
+        if (audioManager == null) return false;
+        try {
+            int mode = audioManager.getMode();
+            return mode == AudioManager.MODE_IN_CALL
+                    || mode == AudioManager.MODE_RINGTONE
+                    || mode == AudioManager.MODE_IN_COMMUNICATION;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
