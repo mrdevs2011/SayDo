@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MACRO_TOOLS } from './macro-tools.js';
 
 /**
  * Tools the AI sees. The relay only validates arguments and forwards them; the phone
@@ -67,22 +68,7 @@ export const TOOLS: ToolDef[] = [
     timeoutSec: 20,
     readOnly: true,
   },
-  {
-    name: 'list_macros',
-    title: 'List macros',
-    description: 'Recorded SayDo macros: id, trigger, steps.',
-    input: {},
-    timeoutSec: 20,
-    readOnly: true,
-  },
-  {
-    name: 'run_macro',
-    title: 'Run macro',
-    description:
-      'Runs a recorded macro by id or trigger and waits until it ends.',
-    input: { macro: z.string().min(1).max(200).describe('Macro id or trigger text, e.g. "open youtube"') },
-    timeoutSec: 240,
-  },
+  ...MACRO_TOOLS,
   {
     name: 'read_screen',
     title: 'Read screen',

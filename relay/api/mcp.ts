@@ -63,11 +63,12 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     { name: 'saydo', version: '1.0.0' },
     {
       instructions:
-        `Phone "${name}". Start with device_status. Each call is slow: prefer act with several steps over single calls.\n` +
-        'Read the screen with read_screen and a query; click by text or number.\n' +
-        'Use read_notifications to answer "what came to me".\n' +
-        'screenshot is expensive: only when the screen tree is empty (games).\n' +
-        'Never send messages or change anything unless the user asked.',
+        `Phone "${name}". Macro first:\n` +
+        '1) For any goal call find_macro with it (score under 0.6: try one phrasing in another language).\n' +
+        '2) Good match (0.6+): run_macro, report briefly. SENSITIVE macros need confirm=true, only after the user confirmed that exact action.\n' +
+        '3) Otherwise drive the phone: act (several steps per call), read_screen with a query. read_notifications answers "what came to me". screenshot only if the tree is empty.\n' +
+        '4) Never do anything with money, passwords or sending messages unless the user asked for exactly that and confirmed it.\n' +
+        '5) After a manual sequence worked, offer to save it as a macro.',
     },
   );
 

@@ -318,9 +318,9 @@ test('compact tools: schemas, act with a simulated phone, read_notifications lim
   const { tools } = await c.listTools();
   for (const n of ['act', 'read_notifications', 'read_screen']) assert.ok(tools.some((t) => t.name === n), n);
   const total = JSON.stringify(tools).length;
-  assert.ok(total < 9000, `tool list is ${total} chars`);
+  assert.ok(total < 13000, `tool list is ${total} chars`);
   const instr = c.getInstructions() ?? '';
-  assert.ok(instr.length < 600 && /act/.test(instr) && /read_notifications/.test(instr), instr);
+  assert.ok(instr.length < 1000 && /act/.test(instr) && /read_notifications/.test(instr) && /find_macro/.test(instr), instr);
 
   // read_screen: new arguments pass through, old max_elements 10..600 floor is gone
   const rs = await c.callTool({ name: 'read_screen', arguments: { query: 'ok', bounds: true, max_elements: 5 } });
@@ -371,6 +371,79 @@ test('compact tools: schemas, act with a simulated phone, read_notifications lim
     assert.equal((r as any).isError, true, JSON.stringify(a));
   }
   assert.equal(seen.length, m);
+
+  await c.close();
+  await ph.stop();
+});
+
+test('macro first: tools, argument limits, sensitive refusal travels back, instructions', async () => {
+  const deviceId = rnd(16), secret = rnd(), token = rnd();
+  await post('/api/device/register', { deviceId, deviceSecret: secret, clientTokenHash: sha(token), name: 'Test' });
+  const seen: any[] = [];
+  const ph = phone(deviceId, secret, (cmd) => {
+    seen.push(cmd);
+    const a = cmd.args ?? {};
+    if (cmd.tool === 'find_macro') {
+      return { ok: true, content: [{ type: 'text', text: '1. 0.88 id=a1b2c3d4 "youtube favorite music" apps=YouTube\n   YouTube: Library > Favourites (6 steps)' }] };
+    }
+    if (cmd.tool === 'run_macro') {
+      // the phone refuses sensitive macros without confirm (simulated: trigger contains "payme")
+      if (/payme/.test(a.macro) && a.confirm !== true) return { ok: false, error: 'refused: this macro is sensitive' };
+      return { ok: true, content: [{ type: 'text', text: 'completed "x" (6 steps); app in front: com.google.android.youtube' }] };
+    }
+    if (['list_macros', 'describe_macro', 'set_macro_info', 'scroll_to'].includes(cmd.tool)) {
+      return { ok: true, content: [{ type: 'text', text: 'ok' }] };
+    }
+    return { ok: false, error: 'no' };
+  });
+  await new Promise((ok) => setTimeout(ok, 300));
+  const c = await mcpClient(`${base}/mcp/${token}`);
+
+  const { tools } = await c.listTools();
+  for (const n of ['find_macro', 'list_macros', 'describe_macro', 'set_macro_info', 'run_macro', 'scroll_to']) {
+    assert.ok(tools.some((t) => t.name === n), n);
+  }
+  const macroText = JSON.stringify(tools.filter((t) => /macro/.test(t.name)));
+  assert.ok(macroText.length < 4500, `macro tools are ${macroText.length} chars`);
+  const find = tools.find((t) => t.name === 'find_macro')!;
+  assert.equal(find.annotations?.readOnlyHint, true);
+  assert.equal(tools.find((t) => t.name === 'run_macro')!.annotations?.readOnlyHint, false);
+  const instr = c.getInstructions() ?? '';
+  assert.ok(/confirm/.test(instr) && /save it as a macro/.test(instr) && /0\.6/.test(instr), instr);
+
+  // find_macro: query passes through untouched
+  const f = await c.callTool({ name: 'find_macro', arguments: { query: 'ютуб ni ochib musiqa', limit: 3 } });
+  assert.match(((f as any).content[0]).text, /youtube favorite music/);
+  assert.deepEqual(seen.at(-1).args, { query: 'ютуб ni ochib musiqa', limit: 3 });
+  const n = seen.length;
+  for (const [name, args] of [
+    ['find_macro', { query: '' }], ['find_macro', { query: 'x', limit: 4 }], ['find_macro', {}],
+    ['list_macros', { limit: 51 }], ['list_macros', { offset: -1 }],
+    ['describe_macro', {}], ['set_macro_info', { macro: 'a', aliases: ['x'.repeat(61)] }],
+    ['run_macro', { macro: 'a', confirm: 'yes' }], ['run_macro', { macro: 'a', params: { k: 5 } }],
+    ['scroll_to', { text: 'x', direction: 'diagonal' }], ['scroll_to', { text: 'x', max_swipes: 21 }],
+  ] as [string, any][]) {
+    const r = await c.callTool({ name, arguments: args }).catch((e) => ({ isError: true, e }));
+    assert.equal((r as any).isError, true, name + JSON.stringify(args));
+  }
+  assert.equal(seen.length, n, 'invalid calls must not reach the phone');
+
+  // valid calls with all arguments reach the phone
+  await c.callTool({ name: 'list_macros', arguments: { limit: 5, offset: 10 } });
+  assert.deepEqual(seen.at(-1).args, { limit: 5, offset: 10 });
+  await c.callTool({ name: 'set_macro_info', arguments: { macro: 'a1b2c3d4', description: 'd', aliases: ['yt music'], sensitive: true } });
+  assert.deepEqual(seen.at(-1).args, { macro: 'a1b2c3d4', description: 'd', aliases: ['yt music'], sensitive: true });
+  const run = await c.callTool({ name: 'run_macro', arguments: { macro: 'a1b2c3d4', params: { query: 'lo-fi' } } });
+  assert.match(((run as any).content[0]).text, /completed/);
+  assert.deepEqual(seen.at(-1).args, { macro: 'a1b2c3d4', params: { query: 'lo-fi' } });
+
+  // sensitive macro: the phone's refusal reaches the AI as an error; with confirm it goes through
+  const refused = await c.callTool({ name: 'run_macro', arguments: { macro: 'payme' } });
+  assert.equal(refused.isError, true);
+  assert.match(((refused as any).content[0]).text, /sensitive/);
+  const allowed = await c.callTool({ name: 'run_macro', arguments: { macro: 'payme', confirm: true } });
+  assert.equal(allowed.isError, undefined);
+  assert.equal(seen.at(-1).args.confirm, true);
 
   await c.close();
   await ph.stop();
