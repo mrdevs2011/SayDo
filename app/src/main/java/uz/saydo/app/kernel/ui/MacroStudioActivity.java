@@ -71,7 +71,7 @@ public final class MacroStudioActivity extends Activity {
         root.addView(tvTitle);
 
         TextView tvSubtitle = new TextView(this);
-        tvSubtitle.setText(String.format("%d steps â€¢ %d ms total", editableGestures.size(), currentMacro.duration));
+        tvSubtitle.setText(String.format("%d steps \u2022 %d ms total", editableGestures.size(), currentMacro.duration));
         tvSubtitle.setTextColor(Color.parseColor("#8E9BB5"));
         tvSubtitle.setTextSize(13f);
         tvSubtitle.setPadding(0, 8, 0, 24);
