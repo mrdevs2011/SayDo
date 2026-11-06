@@ -178,15 +178,48 @@ public class GestureService extends AccessibilityService {
         return s;
     }
 
+    /**
+     * True only if the launcher is really in front. This used to read lastPkg, which ignores
+     * SayDo's own windows: with SayDo open it still said "home", so recording started on the
+     * SayDo screen and the play button tapped on SayDo instead of the home screen.
+     */
     boolean onHome() {
-        return launcherPackages().contains(lastPkg);
+        String top = topApplicationPkg();
+        boolean home = top != null ? launcherPackages().contains(top) : launcherPackages().contains(lastPkg);
+        return home;
     }
 
-    void goHomeThen(final Runnable after) {
-        if (onHome()) {
-            homeHandler.postDelayed(after, 60);
-            return;
+    /** Package of the top full application window, including SayDo; null if unknown. */
+    String topApplicationPkg() {
+        try {
+            String best = null;
+            int bestLayer = Integer.MIN_VALUE;
+            for (android.view.accessibility.AccessibilityWindowInfo w : getWindows()) {
+                if (w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                AccessibilityNodeInfo r = w.getRoot();
+                if (r == null) continue;
+                try {
+                    CharSequence cp = r.getPackageName();
+                    if (cp != null && w.getLayer() > bestLayer) {
+                        bestLayer = w.getLayer();
+                        best = cp.toString();
+                    }
+                } finally {
+                    try { r.recycle(); } catch (Throwable ignored) {}
+                }
+            }
+            return best;
+        } catch (Throwable t) {
+            return null;
         }
+    }
+
+    /**
+     * Goes to the launcher's default page, so recording and playback always start from the
+     * same screen. Home from an app returns to the last launcher page; a second Home press
+     * on the launcher moves to the default page.
+     */
+    void goHomeThen(final Runnable after) {
         performGlobalAction(GLOBAL_ACTION_HOME);
         final long t0 = SystemClock.uptimeMillis();
         homeHandler.postDelayed(new Runnable() {
@@ -194,17 +227,16 @@ public class GestureService extends AccessibilityService {
             @Override
             public void run() {
                 long el = SystemClock.uptimeMillis() - t0;
-                if (el >= 180 && onHome()) {
-                    homeHandler.postDelayed(after, 80);
+                boolean home = el >= 150 && onHome();
+                if (home || el > 2000) {
+                    DebugLog.i("Home", "reached=" + home + " top=" + topApplicationPkg() + " in " + el + " ms");
+                    performGlobalAction(GLOBAL_ACTION_HOME);
+                    homeHandler.postDelayed(after, 500);
                     return;
                 }
-                if (!resent && el > 700) {
+                if (!resent && el > 800) {
                     resent = true;
                     performGlobalAction(GLOBAL_ACTION_HOME);
-                }
-                if (el > 1600) {
-                    homeHandler.postDelayed(after, 80);
-                    return;
                 }
                 homeHandler.postDelayed(this, 50);
             }
@@ -362,6 +394,7 @@ public class GestureService extends AccessibilityService {
 
         if (!g.pkg.isEmpty()) {
             String cur = currentScreenPkg();
+            DebugLog.i("Play", "step " + (i + 1) + " " + g.type + " want=" + g.pkg + " cur=" + cur);
             if (cur != null && !cur.equals(g.pkg)) {
                 if (now < screenDeadline) {
                     handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline,
@@ -404,6 +437,7 @@ public class GestureService extends AccessibilityService {
                     SmartGestureDispatcher.ResolveResult res =
                             SmartGestureDispatcher.resolveAndExecute(root, domainGesture, w, h, null);
                     if (res.handledDirectly) {
+                        DebugLog.i("Play", "step " + (i + 1) + " clicked node directly");
                         handler.postDelayed(() -> step(list, i + 1, tok, failures), 60);
                         return;
                     } else if (res.foundAnchor) {
@@ -420,6 +454,8 @@ public class GestureService extends AccessibilityService {
             }
         }
 
+        DebugLog.i("Play", String.format(java.util.Locale.US, "step %d dispatch %s x=%.4f y=%.4f dur=%d anchor=%b try=%d",
+                i + 1, g.type, g.x, g.y, g.dur, g.anchor != null, attempt));
         GestureDescription gd;
         try {
             gd = build(g);
