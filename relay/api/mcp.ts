@@ -4,6 +4,12 @@ import { bearer, json, queryParam, sha256, type Req, type Res } from '../lib/htt
 import { keys, redis } from '../lib/store.js';
 import { TOOLS } from '../lib/tools.js';
 import { callDevice } from '../lib/call.js';
+import { allow, AUTH_FAIL_LIMIT, blocked, clientIp, recordFailure } from '../lib/ratelimit.js';
+
+/** Requests per minute for one client token. */
+const MCP_PER_TOKEN_MIN = 120;
+/** Browser origins allowed to call the endpoint (comma separated). Requests without Origin (all MCP clients that are not web pages) are always fine. */
+const ALLOWED_ORIGINS = (process.env.MCP_ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
 
 /**
  * MCP endpoint (Streamable HTTP, stateless).
@@ -14,16 +20,36 @@ import { callDevice } from '../lib/call.js';
  * The token selects which phone this MCP server controls.
  */
 export default async function handler(req: Req, res: Res): Promise<void> {
+  // Web pages must not drive the phone: refuse browser requests from origins that are not listed.
+  const origin = req.headers['origin'];
+  if (typeof origin === 'string' && !ALLOWED_ORIGINS.includes(origin)) {
+    return json(res, 403, { error: 'forbidden_origin' });
+  }
+
+  // Token guessing: after too many wrong tokens from one address, stop answering it for a while.
+  const ip = clientIp(req);
+  if (await blocked('authfail', ip, AUTH_FAIL_LIMIT)) {
+    res.setHeader('retry-after', '600');
+    return json(res, 429, { error: 'too_many_requests' });
+  }
+
   const token = bearer(req) ?? queryParam(req, 'token');
   if (!token || token.length < 32 || token.length > 200) {
+    await recordFailure(ip);
     res.setHeader('www-authenticate', 'Bearer');
     return json(res, 401, { error: 'unauthorized' });
   }
+  const tokenHash = sha256(token);
   const r = await redis();
-  const deviceId = await r.get(keys.token(sha256(token)));
+  const deviceId = await r.get(keys.token(tokenHash));
   if (!deviceId) {
+    await recordFailure(ip);
     res.setHeader('www-authenticate', 'Bearer');
     return json(res, 401, { error: 'unauthorized' });
+  }
+  if (!(await allow('mcp', tokenHash, MCP_PER_TOKEN_MIN, 60))) {
+    res.setHeader('retry-after', '60');
+    return json(res, 429, { error: 'too_many_requests' });
   }
 
   if (req.method !== 'POST') {

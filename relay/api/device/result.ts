@@ -1,5 +1,5 @@
 import { bodyObject, json, CMD_ID_RE, type Req, type Res } from '../../lib/http.js';
-import { authDevice } from '../../lib/device.js';
+import { authDevice, RateLimited } from '../../lib/device.js';
 import { keys, redis } from '../../lib/store.js';
 
 /** Results above this are rejected (Vercel body limit is 4.5 MB). */
@@ -13,7 +13,13 @@ const MAX_RESULT_BYTES = 4 * 1024 * 1024;
  */
 export default async function handler(req: Req, res: Res): Promise<void> {
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
-  const id = await authDevice(req);
+  let id: string | null;
+  try {
+    id = await authDevice(req);
+  } catch (e) {
+    if (e instanceof RateLimited) return json(res, 429, { error: 'too_many_requests' });
+    throw e;
+  }
   if (!id) return json(res, 401, { error: 'unauthorized' });
 
   const b = bodyObject(req);
