@@ -29,8 +29,15 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | Delete | **Changed** (`184a532`) | Confirmation dialog instead of tap-twice |
 | Pause before a step with a known app | **Capped at 3 s** (`a46f7a4`) | An 8.14 s recorded pause replayed as 3 s; logged when capped |
 | Voice gate | **Not tested** | Off by default |
-| MCP relay | Deployed, E2E test passes locally | Simulated phone only |
-| MCP on the phone | **Not tested** | Off by default |
+| MCP relay | Deployed (older code, no rate limits), E2E test passes locally | Also tested against the live relay with the real phone, see next row |
+| MCP on the phone | **Works against the live relay** (S22+, build 2.12.0) | tools/list = 14 tools; device_status, list_macros, press home/back, open_app, read_screen (20-34 numbered elements, counts only), tap, run_macro of a 2-step macro (completed, 6.5 s incl. one 3 s capped pause) all returned ok. Errors: unknown macro and tap outside the screen return isError with a clear text; negative coordinate is rejected by schema; 2 wrong tokens got 401. Timings (single samples, via relay from this PC): tap 0.5-1.5 s, read_screen 1.1-2.9 s, run_macro 6.5 s. First "connected" in the app appeared about 26 s after switching on (first long poll). Not tested: screenshot, list_apps, type_text, click_element, swipe, long_press (privacy rules) |
+| MCP token rotation with MCP off | **Bug found and fixed in code (`a49d4b2`), fix not yet tested on the phone** | On the phone, rotating the token with MCP off left the OLD token valid on the relay (a tools/list with the old token returned 200). Reason: the new hash is only registered when MCP starts. Fix registers the new hash right after rotation. Needs a re-test with the new build |
+| Replay in Calculator | **Works** | Samsung Calculator, 11-tap macro (12+34x5-67), recorded 11/11 strokes for 11 inputs; replay 5/5: every step once, result 115 each time. All steps were done by accessibility click on the anchored node, not by coordinates |
+| Replay in Clock | **Works** | Samsung Clock, 13 inputs (12 tab taps + 1 swipe) recorded as 13 strokes; replay 5/5: 13 steps each once, ended on the Stopwatch tab like the recording. The swipe was dispatched; its visible effect was not checked |
+| Pause cap in Calculator | **Works** | 8.139 s recorded pause replayed as 3000 ms (log: `pause capped 8139 -> 3000`) |
+| 9+ macros on the main screen | **Works** | 14 rows: list bottom y=2036, START top y=2059; last row's play button [714,1805][849,1940] fully visible; tapping it ran that macro (dispatch y=0.0949 = m9) and listening stayed on |
+| MacroStudio, Debug, Benchmark screens | **Open without crash** | `logcat -b crash` empty. Garbled bullet in MacroStudio subtitle fixed (`0b6507a`) |
+| Voice gate screen | **Opens; meter not read** | `uiautomator dump` fails there ("could not get idle state", the screen animates), so the meter value was not read |
 
 ## Fixed, with evidence
 
@@ -41,13 +48,13 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 
 ## Still open
 
-1. **Beeps.** Google's own speech service plays a sound at the start and end of each listening session, about every 5 s. Not muted, because that is not clearly safe.
+1. **Beeps.** Measured source: `com.google.android.tts` (Speech Services by Google, `GoogleTTSRecognitionService`, uid 10283) plays two short `AudioTrack` tones per recognition session, usage `USAGE_NOTIFICATION_EVENT` (content type MUSIC), each about 0.2-0.4 s, one at the start and one at the end. 9 sessions in 45 s, one every 5.1 s. Listening with zero saved macros starts no recognizer and therefore makes no beeps. Not fixed. Options: see the final report of the session.
 2. **Top-edge swipe is not recorded.** The status-bar region belongs to SystemUI; probably not fixable from the overlay.
 3. **Voice recognition quality** is unmeasured.
 4. **Voice gate** is untested (off by default).
-5. **Replay in third-party apps, slow screens, long idle gaps** are untested.
+5. **Replay in the owner's own apps, slow screens, long idle gaps** are untested (Calculator and Clock pass).
 6. **MCP on the phone** is untested (off by default). The relay has an end-to-end test with a simulated phone only. Hardening in git (rate limits, Origin check, caps) is **not deployed**; owner decisions are in the relay review notes of the final report.
-7. **8+ macros on the main screen** not checked.
+7. **Replay always presses Home first** (`Runner`), so a macro must begin with a tap on the app icon on the launcher. A macro recorded inside an app only works if the app is opened within the first ~8 s (tested by launching it with adb after the replay started). Opening the app by adb *before* pressing play does not help. Decide whether macros should start from the current screen.
 8. **Uzbek triggers** are not supported or tested.
 9. Slow replay for anchors that *can* match: not measured.
 10. Accessibility via ADB right after install sometimes does not stick; setting it again works.
