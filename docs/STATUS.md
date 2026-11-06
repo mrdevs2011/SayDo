@@ -1,6 +1,6 @@
 # SayDo status
 
-Last updated: 2026-11-06. Version on `main`: 2.13.0 (versionCode 26). Newest verified-on-phone builds are listed per row.
+Last updated: 2026-11-06. Version on `main`: 2.14.0 (versionCode 27). Newest verified-on-phone builds are listed per row.
 
 Only what was observed on a real phone counts as working. Unit tests run on a JVM with Android
 stubbed, so they cannot prove on-device behaviour.
@@ -39,6 +39,7 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | MacroStudio, Debug, Benchmark screens | **Open without crash** | `logcat -b crash` empty. Garbled bullet in MacroStudio subtitle fixed (`0b6507a`) |
 | Voice gate screen | **Opens and closes, no crash** (2 times) | Meter level for silence NOT verified: `uiautomator dump` fails there ("could not get idle state", the screen animates) and screenshots are not allowed. Gate and calibration untested |
 | App icon | **APK is correct; phone still unconfirmed** | CI APK has the adaptive icon (navy background, white Say, green Do, monochrome layer); no legacy or override resources; installed APK was byte-identical to it. `am force-stop` of the launcher done; shell may not disable/enable SayDo's component (SecurityException). Cause is most likely the One UI Home icon cache. Human: look at the icon; if old, Settings > Apps > One UI Home > Storage > Clear cache (cache only), or restart the phone; also check no icon pack/theme is applied |
+| MCP compact tools (2.14.0) | **Built and unit/relay tested; NOT deployed, NOT run through MCP on a phone** | Compact `read_screen` (query, bounds, max_elements), `act` (15 steps in one call), `read_notifications` (opt-in setting + Notification access), `canTakeScreenshot` in the accessibility config, bubble untouchable during commands, screenshot defaults 540/q50. JVM unit tests (format, act parser, notification buffer) and relay e2e test (schemas, act and read_notifications with a simulated phone). Live relay still has the old tools, so none of the new tools were called on a phone. Unverified: act timing and retries on real screens, Telegram flows, whether the bubble stopped swallowing taps, whether the screenshot SecurityException is gone, anything needing Notification access (the owner grants it). See `docs/MCP.md` |
 
 ## Fixed, with evidence
 

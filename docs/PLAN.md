@@ -53,6 +53,7 @@ Test on a phone only after Stages 0-3. It controls the phone remotely.
 - Relay review done in git (rate limits, Origin check, queue and status caps, token-hash takeover check), **not deployed**.
   The owner decides on deployment, on the token in the URL path, and on closing registration (see the review notes).
 - Done on the phone (2026-11-06, live relay with the older code): 14 tools, status, list, press, open_app, read_screen, tap, run_macro, error paths, wrong token 401, token rotation (bug found and fixed, see STATUS). Not tested: screenshot, list_apps, type_text, swipe, click_element. Voice gate and MCP stay off by default.
+- 2.14.0 (built, not deployed, not run on a phone through MCP): compact `read_screen`, `act`, `read_notifications`, screenshot fix, bubble untouchable during commands; see `docs/MCP.md`. Next: owner approves the relay deploy, grants Notification access and the new MCP setting; then measure `act` on real screens (timing, retries) and a message flow the owner asks for.
 - Open: replay always presses Home first, so macros must start with the launcher icon tap (see STATUS).
 
 ## Stage 1 evidence so far (2026-11-06)
