@@ -52,4 +52,9 @@ Test on a phone only after Stages 0-3. It controls the phone remotely.
 
 - Relay review done in git (rate limits, Origin check, queue and status caps, token-hash takeover check), **not deployed**.
   The owner decides on deployment, on the token in the URL path, and on closing registration (see the review notes).
-- Not started: MCP on the phone, with the voice gate and MCP both still off by default.
+- Done on the phone (2026-11-06, live relay with the older code): 14 tools, status, list, press, open_app, read_screen, tap, run_macro, error paths, wrong token 401, token rotation (bug found and fixed, see STATUS). Not tested: screenshot, list_apps, type_text, swipe, click_element. Voice gate and MCP stay off by default.
+- Open: replay always presses Home first, so macros must start with the launcher icon tap (see STATUS).
+
+## Stage 1 evidence so far (2026-11-06)
+
+Calculator 5/5 (11 steps) and Clock 5/5 (13 steps incl. one swipe) replays passed; pause cap 3 s confirmed; 14 macros on the main screen fine. Still not run: the 5 short + 2 long, 10 runs each measurement, replay in the owner's own apps, voice.

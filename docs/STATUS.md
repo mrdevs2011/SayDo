@@ -1,6 +1,6 @@
 # SayDo status
 
-Last updated: 2026-11-06. Version on `main`: 2.12.0 (versionCode 25). Newest verified-on-phone builds are listed per row.
+Last updated: 2026-11-06. Version on `main`: 2.13.0 (versionCode 26). Newest verified-on-phone builds are listed per row.
 
 Only what was observed on a real phone counts as working. Unit tests run on a JVM with Android
 stubbed, so they cannot prove on-device behaviour.
@@ -31,13 +31,14 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | Voice gate | **Not tested** | Off by default |
 | MCP relay | Deployed (older code, no rate limits), E2E test passes locally | Also tested against the live relay with the real phone, see next row |
 | MCP on the phone | **Works against the live relay** (S22+, build 2.12.0) | tools/list = 14 tools; device_status, list_macros, press home/back, open_app, read_screen (20-34 numbered elements, counts only), tap, run_macro of a 2-step macro (completed, 6.5 s incl. one 3 s capped pause) all returned ok. Errors: unknown macro and tap outside the screen return isError with a clear text; negative coordinate is rejected by schema; 2 wrong tokens got 401. Timings (single samples, via relay from this PC): tap 0.5-1.5 s, read_screen 1.1-2.9 s, run_macro 6.5 s. First "connected" in the app appeared about 26 s after switching on (first long poll). Not tested: screenshot, list_apps, type_text, click_element, swipe, long_press (privacy rules) |
-| MCP token rotation with MCP off | **Bug found and fixed in code (`a49d4b2`), fix not yet tested on the phone** | On the phone, rotating the token with MCP off left the OLD token valid on the relay (a tools/list with the old token returned 200). Reason: the new hash is only registered when MCP starts. Fix registers the new hash right after rotation. Needs a re-test with the new build |
+| MCP token rotation with MCP off | **Bug found, fixed (`a49d4b2`) and verified on the phone** | Before the fix: old token still HTTP 200 after rotation with MCP off. After (build of `805bc06`): token A 200; rotated with MCP on: A 401; B 200; MCP off and rotated: B 401, log `token rotated while off, register HTTP 200`; MCP service gone. Old note: | On the phone, rotating the token with MCP off left the OLD token valid on the relay (a tools/list with the old token returned 200). Reason: the new hash is only registered when MCP starts. Fix registers the new hash right after rotation |
 | Replay in Calculator | **Works** | Samsung Calculator, 11-tap macro (12+34x5-67), recorded 11/11 strokes for 11 inputs; replay 5/5: every step once, result 115 each time. All steps were done by accessibility click on the anchored node, not by coordinates |
 | Replay in Clock | **Works** | Samsung Clock, 13 inputs (12 tab taps + 1 swipe) recorded as 13 strokes; replay 5/5: 13 steps each once, ended on the Stopwatch tab like the recording. The swipe was dispatched; its visible effect was not checked |
 | Pause cap in Calculator | **Works** | 8.139 s recorded pause replayed as 3000 ms (log: `pause capped 8139 -> 3000`) |
 | 9+ macros on the main screen | **Works** | 14 rows: list bottom y=2036, START top y=2059; last row's play button [714,1805][849,1940] fully visible; tapping it ran that macro (dispatch y=0.0949 = m9) and listening stayed on |
 | MacroStudio, Debug, Benchmark screens | **Open without crash** | `logcat -b crash` empty. Garbled bullet in MacroStudio subtitle fixed (`0b6507a`) |
-| Voice gate screen | **Opens; meter not read** | `uiautomator dump` fails there ("could not get idle state", the screen animates), so the meter value was not read |
+| Voice gate screen | **Opens and closes, no crash** (2 times) | Meter level for silence NOT verified: `uiautomator dump` fails there ("could not get idle state", the screen animates) and screenshots are not allowed. Gate and calibration untested |
+| App icon | **APK is correct; phone still unconfirmed** | CI APK has the adaptive icon (navy background, white Say, green Do, monochrome layer); no legacy or override resources; installed APK was byte-identical to it. `am force-stop` of the launcher done; shell may not disable/enable SayDo's component (SecurityException). Cause is most likely the One UI Home icon cache. Human: look at the icon; if old, Settings > Apps > One UI Home > Storage > Clear cache (cache only), or restart the phone; also check no icon pack/theme is applied |
 
 ## Fixed, with evidence
 
