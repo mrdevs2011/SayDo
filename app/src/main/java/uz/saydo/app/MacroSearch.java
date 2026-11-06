@@ -81,7 +81,7 @@ final class MacroSearch {
         Collections.addAll(STOP, stop);
         STOP.remove("you"); // part of "you tube" spellings, handled below by skeleton; harmless as content
         // Verbs of "do it" say little about which macro is meant.
-        Collections.addAll(WEAK, "open", "play", "start", "do", "make");
+        Collections.addAll(WEAK, "open", "play", "start", "do", "make", "check", "show");
 
         concept("open", "och", "ochish", "ochib", "ochgin", "otkroi", "otkryt", "otkroy", "zapusti", "zapustit",
                 "launch", "run", "ishga");
@@ -91,7 +91,7 @@ final class MacroSearch {
                 "pesnya", "pesni", "song", "songs", "tracks", "mp3");
         concept("favorite", "favourite", "favorit", "favoritlar", "favourites", "favorites", "sevimli", "sevimlilar",
                 "yoqtirgan", "yoqtirganlar", "yoqtirganim", "lyubimyi", "lyubimye", "lyubimoe", "izbrannoe",
-                "izbrannye", "liked", "like", "likes");
+                "izbrannye", "lyubim", "liked", "like", "likes");
         concept("payment", "pay", "tolov", "tolash", "oplata", "oplatit", "oplati", "payments", "perevod",
                 "otkazma", "transfer");
         concept("message", "messages", "xabar", "xabarlar", "sms", "soobshenie", "soobsheniya", "chat", "chatlar");
@@ -113,9 +113,21 @@ final class MacroSearch {
         concept("weather", "ob", "havo", "pogoda");
     }
 
+    /** Endings of Uzbek and Russian words, longest first; removed only to find a known concept. */
+    private static final String[] SUFFIXES = {
+            "larini", "larni", "lari", "lar", "ning", "ini", "uyu", "yyu", "aya", "oye", "ogo", "ami", "ah",
+            "ni", "ga", "da", "dan", "im", "ing", "gan", "ku", "ke", "ye", "oe", "ov", "u", "e", "i", "a", "y"};
+
     private static String conceptOf(String foldedWord) {
         String c = CONCEPT.get(foldedWord);
-        return c != null ? c : foldedWord;
+        if (c != null) return c;
+        for (String suf : SUFFIXES) {
+            if (foldedWord.length() - suf.length() >= 4 && foldedWord.endsWith(suf)) {
+                c = CONCEPT.get(foldedWord.substring(0, foldedWord.length() - suf.length()));
+                if (c != null) return c;
+            }
+        }
+        return foldedWord;
     }
 
     // ------------------------------------------------------------------ word and field matching
