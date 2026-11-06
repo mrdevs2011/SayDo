@@ -124,6 +124,7 @@ public class McpService extends Service {
         stopRequested = true;
         running = false;
         connected = false;
+        FloatService.setMcpBusy(false, 0);
         Thread w = worker;
         if (w != null) w.interrupt();
         releaseWakeLock();
@@ -199,7 +200,8 @@ public class McpService extends Service {
         if (exp > 0 && exp < System.currentTimeMillis()) return; // AI already gave up
 
         lastCommand = tool + " · " + new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
-        DebugLog.i("MCP", "command " + tool + " " + cmd.optJSONObject("args"));
+        // Typed text and notification filters can be private: log the tool name only.
+        DebugLog.i("MCP", "command " + tool);
         updateNotification();
         changed();
 

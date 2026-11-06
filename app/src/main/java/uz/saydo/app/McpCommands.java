@@ -121,6 +121,8 @@ final class McpCommands {
         JSONObject args = cmd.optJSONObject("args");
         if (args == null) args = new JSONObject();
         JSONObject out = new JSONObject();
+        // The floating bubble must not swallow the taps of this command; it comes back afterwards.
+        FloatService.setMcpBusy(true, tool.equals("act") ? 80_000 : tool.equals("run_macro") ? 240_000 : 30_000);
         try {
             out.put("id", id);
             JSONArray content = new JSONArray();
@@ -133,6 +135,8 @@ final class McpCommands {
             DebugLog.e("MCP", tool + " crashed: " + t);
             putErr(out, "Phone error in " + tool + ": " + t.getClass().getSimpleName()
                     + (t.getMessage() == null ? "" : " — " + t.getMessage()));
+        } finally {
+            FloatService.setMcpBusy(false, 0);
         }
         return out;
     }

@@ -118,9 +118,37 @@ public class FloatService extends Service {
         }
     };
 
+    // While an MCP command runs the bubble must not swallow its taps (it sits on the right edge).
+    private static volatile FloatService inst;
+    private static volatile boolean mcpBusy;
+    private final Runnable mcpBusyTimeout = () -> {
+        mcpBusy = false;
+        applyMcpBusy();
+    };
+
+    /** Makes the bubble untouchable (true) or touchable again (false). Safety: it comes back after safetyMs. */
+    static void setMcpBusy(boolean busy, long safetyMs) {
+        mcpBusy = busy;
+        final FloatService s = inst;
+        if (s == null) return;
+        s.h.post(() -> {
+            s.h.removeCallbacks(s.mcpBusyTimeout);
+            if (busy) s.h.postDelayed(s.mcpBusyTimeout, safetyMs);
+            s.applyMcpBusy();
+        });
+    }
+
+    private void applyMcpBusy() {
+        if (bubble == null || bubbleLp == null) return;
+        if (mcpBusy && !recording) bubbleLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        else bubbleLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        updateBubble();
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
+        inst = this;
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         dens = getResources().getDisplayMetrics().density;
         sizePx = Math.round(SIZE_DP * dens);
@@ -188,6 +216,8 @@ public class FloatService extends Service {
 
     @Override
     public void onDestroy() {
+        if (inst == this) inst = null;
+        h.removeCallbacks(mcpBusyTimeout);
         h.removeCallbacks(autoCollapseRunnable);
         stopRecording(false);
         hideTriggerPanel();
@@ -234,6 +264,7 @@ public class FloatService extends Service {
                         | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
         bubbleLp.gravity = Gravity.TOP | Gravity.START;
+        if (mcpBusy) bubbleLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
 
         int screenW = screenW();
         int margin = Math.round(MARGIN_DP * dens);
