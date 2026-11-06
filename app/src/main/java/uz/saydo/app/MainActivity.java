@@ -84,6 +84,12 @@ public class MainActivity extends AppCompatActivity implements
 
         btnStart.setOnClickListener(v -> onStartClicked());
 
+        View mcp = findViewById(R.id.btnMcp);
+        if (mcp != null) {
+            mcp.setOnClickListener(v -> startActivity(new Intent(this, McpActivity.class)));
+        }
+        McpService.startIfEnabled(this);
+
         View voiceGate = findViewById(R.id.btnVoiceGate);
         if (voiceGate != null) {
             voiceGate.setOnClickListener(v -> startActivity(new Intent(this, VoiceGateActivity.class)));

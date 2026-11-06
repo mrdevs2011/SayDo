@@ -31,6 +31,19 @@
                 android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/btnMcp"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackground"
+                android:contentDescription="MCP sozlamalari"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="MCP"
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
                 android:id="@+id/btnVoiceGate"
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
