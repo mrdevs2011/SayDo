@@ -761,22 +761,56 @@ public class FloatService extends Service {
         try { w.updateViewLayout(recordView, recordLp); } catch (Throwable ignored) { }
     }
 
+    /*
+     * While recording, a touch lands on our overlay and is then re-injected into the app below.
+     * The FLAG_NOT_TOUCHABLE change reaches the input system asynchronously, so injecting right
+     * away made the overlay catch its own injected tap: one real tap was recorded 3 times and
+     * replayed 3 times. So: make the overlay untouchable, wait for that to land, inject, and
+     * ignore anything the overlay still receives during the pass.
+     */
+    private static final long PASS_SETTLE_MS = 70;
+    private static final long PASS_RESTORE_MS = 60;
+    private boolean passActive = false;
+    private boolean passRetried = false;
+    private JSONObject passStroke;
+
     private void passThrough(JSONObject stroke) {
-        GestureService svc = GestureService.instance;
-        if (svc == null || recordView == null) return;
+        if (GestureService.instance == null || recordView == null) return;
         final int tok = ++passToken;
+        passActive = true;
+        passRetried = false;
+        passStroke = stroke;
         setRecordTouchable(false);
-        boolean ok = svc.injectNow(stroke, () -> {
-            if (tok == passToken) setRecordTouchable(true);
-        });
-        if (!ok) {
-            setRecordTouchable(true);
-            return;
-        }
-        long guard = Math.max(stroke.optLong("dur", 60), 60) + 500;
-        h.postDelayed(() -> {
-            if (tok == passToken) setRecordTouchable(true);
-        }, guard);
+        schedulePass(tok, stroke);
+    }
+
+    private void schedulePass(final int tok, final JSONObject stroke) {
+        h.postDelayed(() -> injectPass(tok, stroke), PASS_SETTLE_MS);
+        long guard = Math.max(stroke.optLong("dur", 60), 60) + 900;
+        h.postDelayed(() -> endPass(tok), guard);
+    }
+
+    private void injectPass(final int tok, JSONObject stroke) {
+        if (tok != passToken) return;
+        GestureService svc = GestureService.instance;
+        boolean ok = svc != null && svc.injectNow(stroke,
+                () -> h.postDelayed(() -> endPass(tok), PASS_RESTORE_MS));
+        if (!ok) endPass(tok);
+    }
+
+    private void endPass(int tok) {
+        if (tok != passToken || !passActive) return;
+        passActive = false;
+        passStroke = null;
+        setRecordTouchable(true);
+    }
+
+    /** The overlay caught the injected touch anyway: it never reached the app, so send it again. */
+    private void onPassSwallowed() {
+        if (passRetried || passStroke == null) return;
+        passRetried = true;
+        DebugLog.w("Rec", "injected touch caught by overlay, re-injecting");
+        schedulePass(++passToken, passStroke);
     }
 
     // ============================================================ Transparent Record View
@@ -796,6 +830,11 @@ public class FloatService extends Service {
 
         @Override
         public boolean onTouchEvent(MotionEvent e) {
+            if (passActive) {
+                int am = e.getActionMasked();
+                if (am == MotionEvent.ACTION_UP || am == MotionEvent.ACTION_CANCEL) onPassSwallowed();
+                return true; // never record our own injected touch
+            }
             int sw = screenW();
             int sh = screenH();
 
