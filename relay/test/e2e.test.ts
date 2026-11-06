@@ -300,3 +300,78 @@ test('the command queue of one phone is capped', async () => {
   assert.match((res.content[0] as any).text, /too many/);
   assert.equal(await r.lLen(keys.queue(deviceId)), 25);
 });
+
+test('compact tools: schemas, act with a simulated phone, read_notifications limits', async () => {
+  const deviceId = rnd(16), secret = rnd(), token = rnd();
+  await post('/api/device/register', { deviceId, deviceSecret: secret, clientTokenHash: sha(token), name: 'Test' });
+  const seen: any[] = [];
+  const ph = phone(deviceId, secret, (cmd) => {
+    seen.push(cmd);
+    if (cmd.tool === 'act') return { ok: true, content: [{ type: 'text', text: '1 ok 2 ok' }] };
+    if (cmd.tool === 'read_notifications') return { ok: true, content: [{ type: 'text', text: '10:00 App: t - x' }] };
+    if (cmd.tool === 'read_screen') return { ok: true, content: [{ type: 'text', text: 'pkg 1080x2340\n0 OK click' }] };
+    return { ok: false, error: 'no' };
+  });
+  await new Promise((ok) => setTimeout(ok, 300));
+  const c = await mcpClient(`${base}/mcp/${token}`);
+
+  const { tools } = await c.listTools();
+  for (const n of ['act', 'read_notifications', 'read_screen']) assert.ok(tools.some((t) => t.name === n), n);
+  const total = JSON.stringify(tools).length;
+  assert.ok(total < 9000, `tool list is ${total} chars`);
+  const instr = c.getInstructions() ?? '';
+  assert.ok(instr.length < 600 && /act/.test(instr) && /read_notifications/.test(instr), instr);
+
+  // read_screen: new arguments pass through, old max_elements 10..600 floor is gone
+  const rs = await c.callTool({ name: 'read_screen', arguments: { query: 'ok', bounds: true, max_elements: 5 } });
+  assert.equal(rs.isError, undefined);
+  assert.deepEqual(seen.at(-1).args, { query: 'ok', bounds: true, max_elements: 5 });
+
+  // act: valid script reaches the phone with a long enough timeout
+  const steps = [
+    { click: 'Yuborish' }, { click: 3 }, { tap: [10, 20] }, { long_press: [1, 2, 800] }, { swipe: [1, 2, 3, 4, 300] },
+    { type: 'salom', index: 2, append: true }, { press: 'back' }, { open_app: 'org.telegram.messenger' },
+    { wait: { text: 'Chat', timeout: 5000 } },
+  ];
+  const act = await c.callTool({ name: 'act', arguments: { steps, return: 'diff', stop_on_error: false } });
+  assert.deepEqual(act.content, [{ type: 'text', text: '1 ok 2 ok' }]);
+  const cmd = seen.at(-1);
+  assert.equal(cmd.tool, 'act');
+  assert.equal(cmd.args.steps.length, 9);
+  assert.ok(cmd.exp - Date.now() > 60_000, 'act timeout must exceed the 60 s phone cap');
+
+  // act: invalid scripts never reach the phone
+  const n = seen.length;
+  const bads: unknown[] = [
+    [],
+    Array.from({ length: 16 }, () => ({ press: 'back' })),
+    [{ click: 1, tap: [1, 2] }],
+    [{}],
+    [{ tap: [1] }],
+    [{ press: 'volume' }],
+    [{ wait: {} }],
+    [{ wait: { ms: 5000 } }],
+    [{ click: 1, bogus: true }],
+    [{ click: 1, append: true }],
+  ];
+  for (const b of bads) {
+    const r = await c.callTool({ name: 'act', arguments: { steps: b } }).catch((e) => ({ isError: true, e }));
+    assert.equal((r as any).isError, true, JSON.stringify(b));
+  }
+  const badRet = await c.callTool({ name: 'act', arguments: { steps: [{ press: 'back' }], return: 'all' } }).catch((e) => ({ isError: true, e }));
+  assert.equal((badRet as any).isError, true);
+  assert.equal(seen.length, n);
+
+  // read_notifications: argument limits
+  const ok = await c.callTool({ name: 'read_notifications', arguments: { limit: 50, app: 'telegram', since_minutes: 60 } });
+  assert.deepEqual(ok.content, [{ type: 'text', text: '10:00 App: t - x' }]);
+  const m = seen.length;
+  for (const a of [{ limit: 51 }, { limit: 0 }, { since_minutes: 0 }, { app: '' }, { limit: 'x' }]) {
+    const r = await c.callTool({ name: 'read_notifications', arguments: a }).catch((e) => ({ isError: true, e }));
+    assert.equal((r as any).isError, true, JSON.stringify(a));
+  }
+  assert.equal(seen.length, m);
+
+  await c.close();
+  await ph.stop();
+});
