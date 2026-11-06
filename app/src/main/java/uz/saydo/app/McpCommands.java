@@ -162,7 +162,7 @@ final class McpCommands {
         }
         switch (tool) {
             case "read_screen": text(content, readScreen(a)); return;
-            case "screenshot": screenshot(content, a.optInt("max_width", 720), a.optInt("quality", 60)); return;
+            case "screenshot": screenshot(content, a.optInt("max_width", 540), a.optInt("quality", 50)); return;
             case "click_element": text(content, clickElement(a)); return;
             case "tap": text(content, stroke("tap", a.getInt("x"), a.getInt("y"), a.getInt("x"), a.getInt("y"), 60)); return;
             case "long_press": text(content, stroke("long_press", a.getInt("x"), a.getInt("y"), a.getInt("x"), a.getInt("y"),
@@ -405,7 +405,7 @@ final class McpCommands {
     }
 
     private void screenshot(JSONArray content, int maxWidth, int quality) throws Exception {
-        if (Build.VERSION.SDK_INT < 30) throw new Fail("Screenshots need Android 11 or newer.");
+        if (Build.VERSION.SDK_INT < 30) throw new Fail("screenshots need Android 11+");
         final GestureService s = service();
         final AtomicReference<Bitmap> bmp = new AtomicReference<>();
         final AtomicReference<String> err = new AtomicReference<>();
@@ -429,10 +429,10 @@ final class McpCommands {
                             @Override
                             public void onFailure(int code) {
                                 err.set(code == AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW
-                                        ? "The screen shows a secure window (e.g. banking); Android blocks screenshots."
+                                        ? "secure window: Android blocks screenshots here"
                                         : code == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
-                                        ? "Screenshots too fast; wait a second."
-                                        : "Screenshot failed (code " + code + ").");
+                                        ? "screenshots too fast, wait 1 s"
+                                        : "screenshot failed, code " + code);
                                 l.countDown();
                             }
                         });
@@ -461,9 +461,8 @@ final class McpCommands {
         img.put("data", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
         content.put(img);
         int[] wh = onMain(3000, s::screenSize);
-        text(content, "Screenshot scaled to width " + origW + " px; screen is " + wh[0] + "x" + wh[1]
-                + " px — multiply image coordinates by " + String.format(Locale.US, "%.3f", wh[0] / (float) origW)
-                + " before tap/swipe.");
+        text(content, "image " + origW + "px wide; screen " + wh[0] + "x" + wh[1]
+                + "; multiply image coords by " + String.format(Locale.US, "%.2f", wh[0] / (float) origW));
     }
 
     private String clickElement(JSONObject a) throws Exception {

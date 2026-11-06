@@ -104,10 +104,10 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'screenshot',
     title: 'Screenshot',
-    description: 'Takes a screenshot of the phone (JPEG). Android 11+ only.',
+    description: 'Expensive image of the screen; prefer read_screen. Use only when the tree is empty (games). Fails on secure windows.',
     input: {
-      max_width: z.number().int().min(240).max(1440).optional().describe('Default 720 px'),
-      quality: z.number().int().min(20).max(95).optional().describe('JPEG quality, default 60'),
+      max_width: z.number().int().min(240).max(1440).optional().describe('Default 540'),
+      quality: z.number().int().min(20).max(95).optional().describe('Default 50'),
     },
     timeoutSec: 25,
     readOnly: true,
