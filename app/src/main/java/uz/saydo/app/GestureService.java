@@ -367,7 +367,13 @@ public class GestureService extends AccessibilityService {
         }
         final G g = list.get(i);
         if (hud != null) hud.update(currentMacroName, i + 1, list.size());
-        long gap = (i == 0) ? Math.min(g.st, 60) : Math.max(0, g.st - list.get(i - 1).et);
+        long recordedGap = (i == 0) ? Math.min(g.st, 60) : Math.max(0, g.st - list.get(i - 1).et);
+        long gap = (i == 0) ? recordedGap
+                : uz.saydo.app.util.PlaybackGap.effective(recordedGap, !g.pkg.isEmpty());
+        if (gap != recordedGap) {
+            DebugLog.i("Play", "step " + (i + 1) + " pause capped " + recordedGap + " -> " + gap + " ms");
+        }
+        DebugLog.i("Play", "step " + (i + 1) + " waiting " + gap + " ms");
 
         handler.postDelayed(() -> {
             if (tok != token) return;
