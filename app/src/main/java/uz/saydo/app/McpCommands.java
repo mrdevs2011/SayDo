@@ -26,6 +26,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -47,21 +48,48 @@ import uz.saydo.app.util.DebugLog;
  */
 final class McpCommands {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static final int DEFAULT_ELEMENTS = 200;
+    private static final int MAX_CACHED = 1000;
 
-    /** Elements from the latest read_screen, for click_element / type_text by number. */
+    /** Elements from the latest read_screen (all useful ones, not only those printed), for click/type by number. */
     private static final class Element {
         final Rect bounds;
         final String text, desc, viewId;
-        final boolean editable;
+        final boolean editable, clickable, scrollable;
+        final Boolean checked; // null = not checkable
 
-        Element(Rect b, String text, String desc, String viewId, boolean editable) {
+        Element(Rect b, String text, String desc, String viewId, boolean editable, boolean clickable,
+                boolean scrollable, Boolean checked) {
             this.bounds = b;
             this.text = text;
             this.desc = desc;
             this.viewId = viewId;
             this.editable = editable;
+            this.clickable = clickable;
+            this.scrollable = scrollable;
+            this.checked = checked;
         }
+
+        String label() { return McpFormat.label(text, desc, viewId); }
+
+        String flags() { return McpFormat.flags(clickable, editable, scrollable, checked); }
+
+        String line(int idx, boolean withBounds) {
+            return McpFormat.line(idx, label(), flags(),
+                    withBounds ? new int[]{bounds.left, bounds.top, bounds.right, bounds.bottom} : null);
+        }
+
+        /** Identity without the index, to tell what changed between two screens. */
+        String sig() { return label() + "|" + flags(); }
+
+        boolean matches(String q) { return McpFormat.matches(q, text, desc, viewId); }
+    }
+
+    /** One pass over the accessibility tree. */
+    private static final class Scan {
+        String pkg = "";
+        int w, h;
+        List<Element> elements = new ArrayList<>();
+        boolean truncated;
     }
 
     private static volatile List<Element> lastScreen = Collections.emptyList();
@@ -75,8 +103,13 @@ final class McpCommands {
     }
 
     /** Thrown for user-facing failures; the message goes to the AI. */
-    static final class Fail extends Exception {
+    static class Fail extends Exception {
         Fail(String m) { super(m); }
+    }
+
+    /** A click target that is not on screen (act retries these for a short time). */
+    static final class NotFound extends Fail {
+        NotFound(String m) { super(m); }
     }
 
     JSONObject execute(JSONObject cmd) {
@@ -121,7 +154,7 @@ final class McpCommands {
                     + "Only device_status, list_macros and run_macro are allowed.");
         }
         switch (tool) {
-            case "read_screen": text(content, readScreen(a.optInt("max_elements", DEFAULT_ELEMENTS))); return;
+            case "read_screen": text(content, readScreen(a)); return;
             case "screenshot": screenshot(content, a.optInt("max_width", 720), a.optInt("quality", 60)); return;
             case "click_element": text(content, clickElement(a)); return;
             case "tap": text(content, stroke("tap", a.getInt("x"), a.getInt("y"), a.getInt("x"), a.getInt("y"), 60)); return;
@@ -292,25 +325,24 @@ final class McpCommands {
 
     // ------------------------------------------------------------------ screen
 
-    private String readScreen(int max) throws Exception {
+    /** Reads the visible tree. Keeps every useful element so indexes stay valid for filtered reads. */
+    private Scan scan(boolean updateCache) throws Exception {
         final GestureService s = service();
-        final int limit = Math.max(10, Math.min(600, max));
         return onMain(8000, () -> {
             AccessibilityNodeInfo root = s.getRootInActiveWindow();
-            if (root == null) throw new Fail("The screen cannot be read right now (screen off or a secure window).");
+            if (root == null) throw new Fail("screen not readable (off or secure window)");
+            Scan sc = new Scan();
             int[] wh = s.screenSize();
-            List<Element> elements = new ArrayList<>();
-            StringBuilder sb = new StringBuilder();
-            sb.append("Screen ").append(wh[0]).append('x').append(wh[1])
-              .append(" px, app: ").append(str(root.getPackageName())).append('\n');
+            sc.w = wh[0];
+            sc.h = wh[1];
+            sc.pkg = str(root.getPackageName());
             ArrayDeque<AccessibilityNodeInfo> q = new ArrayDeque<>();
             q.add(root);
             int visited = 0;
-            boolean truncated = false;
             while (!q.isEmpty()) {
                 AccessibilityNodeInfo n = q.poll();
                 visited++;
-                if (visited > 4000) { truncated = true; break; }
+                if (visited > 4000) { sc.truncated = true; break; }
                 try {
                     for (int i = 0; i < n.getChildCount(); i++) {
                         AccessibilityNodeInfo c = n.getChild(i);
@@ -319,41 +351,49 @@ final class McpCommands {
                     if (!n.isVisibleToUser()) continue;
                     String t = str(n.getText());
                     String d = str(n.getContentDescription());
-                    String vid = str(n.getViewIdResourceName());
-                    boolean interesting = !t.isEmpty() || !d.isEmpty() || n.isClickable() || n.isEditable()
-                            || n.isScrollable() || n.isCheckable() || n.isLongClickable();
-                    if (!interesting) continue;
+                    boolean useful = !t.trim().isEmpty() || !d.trim().isEmpty() || n.isClickable() || n.isEditable();
+                    if (!useful) continue;
                     Rect b = new Rect();
                     n.getBoundsInScreen(b);
                     if (b.isEmpty()) continue;
-                    if (elements.size() >= limit) { truncated = true; continue; }
-                    int idx = elements.size();
-                    elements.add(new Element(b, t, d, vid, n.isEditable()));
-                    String cls = str(n.getClassName());
-                    int dot = cls.lastIndexOf('.');
-                    sb.append('[').append(idx).append("] ").append(dot >= 0 ? cls.substring(dot + 1) : cls);
-                    if (!t.isEmpty()) sb.append(" \"").append(clip(t, 80)).append('"');
-                    if (!d.isEmpty() && !d.equals(t)) sb.append(" desc=\"").append(clip(d, 60)).append('"');
-                    if (!vid.isEmpty()) sb.append(" id=").append(vid.substring(vid.indexOf('/') + 1));
-                    if (n.isClickable()) sb.append(" clickable");
-                    if (n.isEditable()) sb.append(" editable");
-                    if (n.isScrollable()) sb.append(" scrollable");
-                    if (n.isCheckable()) sb.append(n.isChecked() ? " checked" : " unchecked");
-                    if (n.isFocused()) sb.append(" focused");
-                    if (!n.isEnabled()) sb.append(" disabled");
-                    sb.append(" [").append(b.left).append(',').append(b.top).append("][")
-                      .append(b.right).append(',').append(b.bottom).append("]\n");
+                    if (sc.elements.size() >= MAX_CACHED) { sc.truncated = true; continue; }
+                    sc.elements.add(new Element(b, t, d, str(n.getViewIdResourceName()), n.isEditable(),
+                            n.isClickable(), n.isScrollable(), n.isCheckable() ? n.isChecked() : null));
                 } finally {
                     if (n != root) n.recycle();
                 }
             }
             root.recycle();
             for (AccessibilityNodeInfo left : q) left.recycle();
-            lastScreen = elements;
-            if (elements.isEmpty()) sb.append("(no readable elements — try screenshot)\n");
-            if (truncated) sb.append("(list truncated)\n");
-            return sb.toString().trim();
+            if (updateCache) lastScreen = sc.elements;
+            return sc;
         });
+    }
+
+    /** Compact listing: header, then one line per matching element (original indexes), capped at max. */
+    private static String format(Scan sc, String query, boolean bounds, int max, Collection<String> skipSigs) {
+        StringBuilder sb = new StringBuilder(McpFormat.header(sc.pkg, sc.w, sc.h));
+        int shown = 0, matched = 0;
+        for (int i = 0; i < sc.elements.size(); i++) {
+            Element e = sc.elements.get(i);
+            if (!e.matches(query)) continue;
+            if (skipSigs != null && skipSigs.contains(e.sig())) continue;
+            matched++;
+            if (shown >= max) continue;
+            sb.append('\n').append(e.line(i, bounds));
+            shown++;
+        }
+        if (matched > shown) sb.append("\n+").append(matched - shown).append(" more");
+        if (matched == 0) sb.append(sc.elements.isEmpty() ? "\n(empty: use screenshot)"
+                : skipSigs != null ? "\n(no change)" : "\n(no match)");
+        if (sc.truncated) sb.append("\n(tree cut)");
+        return sb.toString();
+    }
+
+    private String readScreen(JSONObject a) throws Exception {
+        int max = McpFormat.clampMax(a.optInt("max_elements", 0), McpFormat.DEFAULT_ELEMENTS, 600);
+        Scan sc = scan(true);
+        return format(sc, a.optString("query", ""), a.optBoolean("bounds", false), max, null);
     }
 
     private void screenshot(JSONArray content, int maxWidth, int quality) throws Exception {
@@ -423,29 +463,33 @@ final class McpCommands {
         if (a.has("index")) {
             List<Element> els = lastScreen;
             int i = a.getInt("index");
-            if (i < 0 || i >= els.size()) throw new Fail("No element [" + i + "]. Call read_screen first.");
-            Element e = els.get(i);
-            return clickAt(s, e.bounds, "[" + i + "] " + label(e));
+            if (i < 0 || i >= els.size()) throw new Fail("no element " + i + " (read_screen first)");
+            return clickAt(s, els.get(i).bounds);
         }
         final String needle = a.optString("text", "").trim().toLowerCase(Locale.ROOT);
-        if (needle.isEmpty()) throw new Fail("Give index or text.");
+        if (needle.isEmpty()) throw new Fail("give index or text");
         Rect found = onMain(8000, () -> {
             AccessibilityNodeInfo root = s.getRootInActiveWindow();
             if (root == null) return null;
             ArrayDeque<AccessibilityNodeInfo> q = new ArrayDeque<>();
             q.add(root);
-            Rect hit = null;
+            Rect exact = null, partial = null;
             int visited = 0;
-            while (!q.isEmpty() && hit == null && visited++ < 4000) {
+            while (!q.isEmpty() && exact == null && visited++ < 4000) {
                 AccessibilityNodeInfo n = q.poll();
                 try {
                     if (n.isVisibleToUser()) {
-                        String hay = (str(n.getText()) + "\u0001" + str(n.getContentDescription()) + "\u0001"
-                                + str(n.getViewIdResourceName())).toLowerCase(Locale.ROOT);
-                        if (hay.contains(needle)) {
+                        String t = str(n.getText()).trim().toLowerCase(Locale.ROOT);
+                        String d = str(n.getContentDescription()).trim().toLowerCase(Locale.ROOT);
+                        String id = str(n.getViewIdResourceName()).toLowerCase(Locale.ROOT);
+                        boolean isExact = t.equals(needle) || d.equals(needle);
+                        if (isExact || (partial == null && (t.contains(needle) || d.contains(needle) || id.contains(needle)))) {
                             Rect b = new Rect();
                             n.getBoundsInScreen(b);
-                            if (!b.isEmpty()) hit = b;
+                            if (!b.isEmpty()) {
+                                if (isExact) exact = b;
+                                else partial = b;
+                            }
                         }
                     }
                     for (int i = 0; i < n.getChildCount(); i++) {
@@ -458,20 +502,14 @@ final class McpCommands {
             }
             for (AccessibilityNodeInfo left : q) left.recycle();
             root.recycle();
-            return hit;
+            return exact != null ? exact : partial;
         });
-        if (found == null) throw new Fail("Nothing on screen contains \"" + a.optString("text") + "\".");
-        return clickAt(s, found, "\"" + a.optString("text") + "\"");
-    }
-
-    private static String label(Element e) {
-        if (!e.text.isEmpty()) return "\"" + clip(e.text, 40) + "\"";
-        if (!e.desc.isEmpty()) return "\"" + clip(e.desc, 40) + "\"";
-        return e.viewId.isEmpty() ? "element" : e.viewId;
+        if (found == null) throw new NotFound("no element '" + clip(a.optString("text"), 40) + "'");
+        return clickAt(s, found);
     }
 
     /** Clicks the clickable node at these bounds if there is one, else taps the center. */
-    private String clickAt(GestureService s, Rect b, String what) throws Exception {
+    private String clickAt(GestureService s, Rect b) throws Exception {
         Boolean clicked = onMain(5000, () -> {
             AccessibilityNodeInfo root = s.getRootInActiveWindow();
             if (root == null) return false;
@@ -491,8 +529,8 @@ final class McpCommands {
             root.recycle();
             return ok;
         });
-        if (clicked != null && clicked) return "Clicked " + what + ".";
-        return stroke("tap", b.centerX(), b.centerY(), b.centerX(), b.centerY(), 60).replace("Tapped", "Tapped " + what + " at");
+        if (clicked != null && clicked) return "ok";
+        return stroke("tap", b.centerX(), b.centerY(), b.centerX(), b.centerY(), 60);
     }
 
     /** Smallest visible node whose bounds equal (or best contain) the target. */
@@ -526,7 +564,7 @@ final class McpCommands {
         final GestureService s = service();
         int[] wh = onMain(3000, s::screenSize);
         if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0 || x1 >= wh[0] || x2 >= wh[0] || y1 >= wh[1] || y2 >= wh[1]) {
-            throw new Fail("Coordinates outside the screen (" + wh[0] + "x" + wh[1] + ").");
+            throw new Fail("outside screen " + wh[0] + "x" + wh[1]);
         }
         final Path p = new Path();
         p.moveTo(x1, y1);
@@ -538,13 +576,9 @@ final class McpCommands {
             ok[0] = r;
             l.countDown();
         }));
-        if (!l.await(durMs + 8000L, TimeUnit.MILLISECONDS)) throw new Fail(kind + " timed out.");
-        if (!ok[0]) throw new Fail(kind + " was cancelled by the system (another touch or a system dialog).");
-        switch (kind) {
-            case "swipe": return "Swiped (" + x1 + "," + y1 + ") → (" + x2 + "," + y2 + ").";
-            case "long_press": return "Long-pressed (" + x1 + "," + y1 + ") for " + durMs + " ms.";
-            default: return "Tapped (" + x1 + "," + y1 + ").";
-        }
+        if (!l.await(durMs + 8000L, TimeUnit.MILLISECONDS)) throw new Fail(kind + " timed out");
+        if (!ok[0]) throw new Fail(kind + " cancelled by system");
+        return "ok";
     }
 
     private String typeText(JSONObject a) throws Exception {
@@ -554,7 +588,7 @@ final class McpCommands {
         final Rect target = a.has("index") ? elementBounds(a.getInt("index")) : null;
         String r = onMain(6000, () -> {
             AccessibilityNodeInfo root = s.getRootInActiveWindow();
-            if (root == null) throw new Fail("The screen cannot be read right now.");
+            if (root == null) throw new Fail("screen not readable");
             AccessibilityNodeInfo field = target != null ? nodeAt(root, target)
                     : root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
             if (field == null || !field.isEditable()) {
@@ -567,19 +601,18 @@ final class McpCommands {
             b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value);
             boolean ok = field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b);
             root.recycle();
-            return ok ? "Typed " + txt.length() + " characters." : "";
+            return ok ? "ok" : "";
         });
         if (r == null) {
-            throw new Fail(target != null ? "That element is not a text field."
-                    : "No text field is focused. Tap/click the field first, or pass its read_screen number.");
+            throw new Fail(target != null ? "not a text field" : "no focused field (click it or pass index)");
         }
-        if (r.isEmpty()) throw new Fail("The app refused the text input.");
+        if (r.isEmpty()) throw new Fail("app refused text");
         return r;
     }
 
     private static Rect elementBounds(int i) throws Fail {
         List<Element> els = lastScreen;
-        if (i < 0 || i >= els.size()) throw new Fail("No element [" + i + "]. Call read_screen first.");
+        if (i < 0 || i >= els.size()) throw new Fail("no element " + i + " (read_screen first)");
         return els.get(i).bounds;
     }
 
@@ -597,23 +630,23 @@ final class McpCommands {
                 if (Build.VERSION.SDK_INT < 28) throw new Fail("lock_screen needs Android 9+.");
                 action = AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN;
                 break;
-            default: throw new Fail("Unknown key: " + key);
+            default: throw new Fail("unknown key " + key);
         }
         boolean ok = onMain(3000, () -> s.performGlobalAction(action));
-        if (!ok) throw new Fail("The system refused '" + key + "'.");
-        return "Pressed " + key + ".";
+        if (!ok) throw new Fail("system refused " + key);
+        return "ok";
     }
 
     private String openApp(String pkg) throws Exception {
         final GestureService s = service();
         final Intent i = ctx.getPackageManager().getLaunchIntentForPackage(pkg);
-        if (i == null) throw new Fail("No launchable app with package " + pkg + ". Use list_apps.");
+        if (i == null) throw new Fail("no app " + pkg + " (list_apps)");
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         onMain(4000, () -> {
             s.startActivity(i);
             return true;
         });
-        return "Opened " + pkg + ". Call read_screen to see it.";
+        return "ok";
     }
 
     private String listApps() {
