@@ -17,6 +17,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import uz.saydo.app.util.DebugLog;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -135,7 +136,8 @@ public class McpActivity extends Activity implements McpService.Listener {
                 .setMessage("Yangi token yaratilsinmi? Eski token bilan ulangan barcha AI'lar uziladi.")
                 .setPositiveButton("Yangilash", (dlg, w) -> {
                     cfg.rotateToken();
-                    restartIfRunning();
+                    if (cfg.enabled()) restartIfRunning();
+                    else unregisterOldTokenNow();
                     render();
                     toast("Yangi token yaratildi. AI'ga qayta ulang.");
                 })
@@ -180,6 +182,24 @@ public class McpActivity extends Activity implements McpService.Listener {
     @Override
     public void onMcpStatus() {
         runOnUiThread(this::render);
+    }
+
+    /**
+     * MCP is off, so the service will not register the new token hash. Do it once here, otherwise the old
+     * token keeps working on the relay until MCP is switched on again. If this fails (offline), the next
+     * MCP start registers anyway.
+     */
+    private void unregisterOldTokenNow() {
+        final McpConfig c = cfg;
+        new Thread(() -> {
+            try {
+                McpRelay.Response r = new McpRelay(c).register();
+                if (r.code == 200) c.markRegistered();
+                DebugLog.i("MCP", "token rotated while off, register HTTP " + r.code);
+            } catch (Throwable t) {
+                DebugLog.i("MCP", "token rotated while off, register failed: " + t);
+            }
+        }, "mcp-rotate").start();
     }
 
     private void restartIfRunning() {
