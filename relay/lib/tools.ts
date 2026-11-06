@@ -49,11 +49,12 @@ export const TOOLS: ToolDef[] = [
     name: 'read_screen',
     title: 'Read screen',
     description:
-      'Returns the UI elements of the screen in front as numbered lines: text, description, view id, ' +
-      'state (clickable/editable/scrollable/checked) and pixel bounds [left,top][right,bottom]. ' +
-      'Use the number with click_element / type_text.',
+      'Screen elements, one line each: "index label flags" (click/edit/scroll/checked). Index works with ' +
+      'click_element/type_text. Use query to filter.',
     input: {
-      max_elements: z.number().int().min(10).max(600).optional().describe('Default 200'),
+      query: z.string().min(1).max(200).optional().describe('Case-insensitive filter on text/description/id'),
+      bounds: z.boolean().optional().describe('Add [l,t][r,b] pixels'),
+      max_elements: z.number().int().min(1).max(600).optional().describe('Default 80'),
     },
     timeoutSec: 20,
     readOnly: true,
