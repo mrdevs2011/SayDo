@@ -29,6 +29,10 @@ public final class Macro implements Serializable, Comparable<Macro> {
     public final String category;
     public final int usageCount;
     public final long lastUsedAt;
+    /** Free text: what the macro does, in the owner's words (empty = none). Shown to AI assistants. */
+    public final String description;
+    /** True once the owner has looked at the sensitive flag in the app; automatic money detection then stays out. */
+    public final boolean sensitiveReviewed;
 
     public Macro(String id, String trigger, List<Gesture> gestures, boolean locked, long createdAt, long duration) {
         this(id, trigger, gestures, locked, createdAt, duration, Collections.emptyList(), false, "General", 0, 0);
@@ -36,6 +40,15 @@ public final class Macro implements Serializable, Comparable<Macro> {
 
     public Macro(String id, String trigger, List<Gesture> gestures, boolean locked, long createdAt, long duration,
                  List<String> aliases, boolean sensitive, String category, int usageCount, long lastUsedAt) {
+        this(id, trigger, gestures, locked, createdAt, duration, aliases, sensitive, category, usageCount, lastUsedAt,
+                "", false);
+    }
+
+    public Macro(String id, String trigger, List<Gesture> gestures, boolean locked, long createdAt, long duration,
+                 List<String> aliases, boolean sensitive, String category, int usageCount, long lastUsedAt,
+                 String description, boolean sensitiveReviewed) {
+        this.description = description != null ? description.trim() : "";
+        this.sensitiveReviewed = sensitiveReviewed;
         this.id = (id != null && !id.trim().isEmpty()) ? id.trim() : UUID.randomUUID().toString();
         this.trigger = (trigger != null) ? trigger.trim().toLowerCase() : "";
         this.locked = locked;
@@ -132,22 +145,33 @@ public final class Macro implements Serializable, Comparable<Macro> {
 
     public Macro incrementUsage() {
         return new Macro(id, trigger, gestures, locked, createdAt, duration,
-                aliases, sensitive, category, usageCount + 1, System.currentTimeMillis());
+                aliases, sensitive, category, usageCount + 1, System.currentTimeMillis(), description, sensitiveReviewed);
     }
 
     public Macro withAliases(List<String> newAliases) {
         return new Macro(id, trigger, gestures, locked, createdAt, duration,
-                newAliases, sensitive, category, usageCount, lastUsedAt);
+                newAliases, sensitive, category, usageCount, lastUsedAt, description, sensitiveReviewed);
     }
 
     public Macro withGestures(List<Gesture> newGestures) {
         return new Macro(id, trigger, newGestures, locked, createdAt, 0,
-                aliases, sensitive, category, usageCount, lastUsedAt);
+                aliases, sensitive, category, usageCount, lastUsedAt, description, sensitiveReviewed);
     }
 
     public Macro withSensitive(boolean isSensitive) {
         return new Macro(id, trigger, gestures, locked, createdAt, duration,
-                aliases, isSensitive, category, usageCount, lastUsedAt);
+                aliases, isSensitive, category, usageCount, lastUsedAt, description, sensitiveReviewed);
+    }
+
+    public Macro withDescription(String newDescription) {
+        return new Macro(id, trigger, gestures, locked, createdAt, duration,
+                aliases, sensitive, category, usageCount, lastUsedAt, newDescription, sensitiveReviewed);
+    }
+
+    /** Owner or AI edit of the metadata only (never the steps). */
+    public Macro withInfo(String newDescription, List<String> newAliases, boolean newSensitive, boolean reviewed) {
+        return new Macro(id, trigger, gestures, locked, createdAt, duration,
+                newAliases, newSensitive, category, usageCount, lastUsedAt, newDescription, reviewed);
     }
 
     public JSONObject toJson() {
@@ -169,6 +193,13 @@ public final class Macro implements Serializable, Comparable<Macro> {
             }
             if (lastUsedAt > 0) {
                 obj.put("last_used", lastUsedAt);
+            }
+
+            if (!description.isEmpty()) {
+                obj.put("desc", description);
+            }
+            if (sensitiveReviewed) {
+                obj.put("sens_rev", true);
             }
 
             if (aliases != null && !aliases.isEmpty()) {
@@ -234,7 +265,8 @@ public final class Macro implements Serializable, Comparable<Macro> {
             }
         }
 
-        return new Macro(id, trigger, gestureList, locked, createdAt, duration, aliasList, sensitive, category, usageCount, lastUsed);
+        return new Macro(id, trigger, gestureList, locked, createdAt, duration, aliasList, sensitive, category,
+                usageCount, lastUsed, obj.optString("desc", ""), obj.optBoolean("sens_rev", false));
     }
 
     @Override
@@ -258,6 +290,8 @@ public final class Macro implements Serializable, Comparable<Macro> {
                Objects.equals(id, macro.id) &&
                Objects.equals(trigger, macro.trigger) &&
                Objects.equals(gestures, macro.gestures) &&
+               sensitiveReviewed == macro.sensitiveReviewed &&
+               Objects.equals(description, macro.description) &&
                Objects.equals(aliases, macro.aliases);
     }
 
