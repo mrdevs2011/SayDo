@@ -17,6 +17,48 @@ export type ToolDef = {
 
 const px = z.number().int().min(0).max(20000);
 
+const ACTIONS = ['click', 'tap', 'long_press', 'swipe', 'type', 'press', 'open_app', 'wait'] as const;
+const KEYS = ['home', 'back', 'recents', 'notifications', 'quick_settings', 'lock_screen', 'power_dialog'] as const;
+
+/** One step of `act`: exactly one action key (type may also carry index/append). */
+export const actStep = z
+  .object({
+    click: z.union([z.number().int().min(0), z.string().min(1).max(200)]).optional(),
+    tap: z.tuple([px, px]).optional(),
+    long_press: z.union([z.tuple([px, px]), z.tuple([px, px, z.number().int().min(300).max(5000)])]).optional(),
+    swipe: z
+      .union([z.tuple([px, px, px, px]), z.tuple([px, px, px, px, z.number().int().min(50).max(5000)])])
+      .optional(),
+    type: z.string().max(5000).optional(),
+    index: z.number().int().min(0).optional(),
+    append: z.boolean().optional(),
+    press: z.enum(KEYS).optional(),
+    open_app: z.string().min(3).max(200).regex(/^[A-Za-z0-9_.]+$/).optional(),
+    wait: z
+      .object({
+        text: z.string().min(1).max(200).optional(),
+        gone: z.string().min(1).max(200).optional(),
+        app: z.string().min(3).max(200).regex(/^[A-Za-z0-9_.]+$/).optional(),
+        ms: z.number().int().min(0).max(3000).optional(),
+        timeout: z.number().int().min(100).max(15000).optional(),
+      })
+      .strict()
+      .refine((w) => w.text !== undefined || w.gone !== undefined || w.app !== undefined || w.ms !== undefined, {
+        message: 'wait needs text, gone, app or ms',
+      })
+      .optional(),
+  })
+  .strict()
+  .refine((o) => ACTIONS.filter((k) => o[k] !== undefined).length === 1, {
+    message: 'each step needs exactly one action: ' + ACTIONS.join(', '),
+  })
+  .refine((o) => (o.index === undefined && o.append === undefined) || o.type !== undefined, {
+    message: 'index/append only go with type',
+  });
+
+/** Phone-side cap of act is 60 s; the relay waits a little longer. */
+export const ACT_TIMEOUT_SEC = 75;
+
 export const TOOLS: ToolDef[] = [
   {
     name: 'device_status',
@@ -69,6 +111,20 @@ export const TOOLS: ToolDef[] = [
     },
     timeoutSec: 25,
     readOnly: true,
+  },
+  {
+    name: 'act',
+    title: 'Act',
+    description:
+      'Runs up to 15 steps in one call: {click:n|text}, {tap:[x,y]}, {long_press:[x,y,ms]}, {swipe:[x1,y1,x2,y2,ms]}, ' +
+      '{type:text,index?,append?}, {press:key}, {open_app:pkg}, {wait:{text?,gone?,app?,ms?,timeout?}}. ' +
+      'Click numbers come from the last read_screen. Returns "1 ok 2 FAIL reason", plus the screen if asked.',
+    input: {
+      steps: z.array(actStep).min(1).max(15),
+      return: z.enum(['none', 'screen', 'diff']).optional().describe('none (default), screen, or diff (what changed)'),
+      stop_on_error: z.boolean().optional().describe('Default true'),
+    },
+    timeoutSec: ACT_TIMEOUT_SEC,
   },
   {
     name: 'click_element',

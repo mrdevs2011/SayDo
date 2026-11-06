@@ -16,6 +16,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.view.Display;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -28,6 +29,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
@@ -162,6 +165,7 @@ final class McpCommands {
                     a.optInt("duration_ms", 800))); return;
             case "swipe": text(content, stroke("swipe", a.getInt("x1"), a.getInt("y1"), a.getInt("x2"), a.getInt("y2"),
                     a.optInt("duration_ms", 350))); return;
+            case "act": text(content, act(a)); return;
             case "type_text": text(content, typeText(a)); return;
             case "press": text(content, press(a.optString("key", ""))); return;
             case "open_app": text(content, openApp(a.optString("package", ""))); return;
@@ -604,7 +608,7 @@ final class McpCommands {
             return ok ? "ok" : "";
         });
         if (r == null) {
-            throw new Fail(target != null ? "not a text field" : "no focused field (click it or pass index)");
+            throw new NotFound(target != null ? "not a text field" : "no focused field (click it or pass index)");
         }
         if (r.isEmpty()) throw new Fail("app refused text");
         return r;
@@ -614,6 +618,167 @@ final class McpCommands {
         List<Element> els = lastScreen;
         if (i < 0 || i >= els.size()) throw new Fail("no element " + i + " (read_screen first)");
         return els.get(i).bounds;
+    }
+
+    // ------------------------------------------------------------------ act (several steps in one call)
+
+    private static final long ACT_CAP_MS = 60_000;
+    private static final long FIND_RETRY_MS = 1500;
+
+    private interface Attempt {
+        void run() throws Exception;
+    }
+
+    /** Retries while the target is not there yet (NotFound), for at most FIND_RETRY_MS or until the deadline. */
+    private static void retryFind(long deadline, Attempt a) throws Exception {
+        long end = Math.min(SystemClock.uptimeMillis() + FIND_RETRY_MS, deadline);
+        while (true) {
+            try {
+                a.run();
+                return;
+            } catch (NotFound nf) {
+                if (SystemClock.uptimeMillis() + 200 > end) throw nf;
+                Thread.sleep(200);
+            }
+        }
+    }
+
+    private String act(JSONObject a) throws Exception {
+        final List<McpAct.Step> steps;
+        try {
+            steps = McpAct.parse(a.optJSONArray("steps"));
+        } catch (IllegalArgumentException e) {
+            throw new Fail(e.getMessage());
+        }
+        final String ret = a.optString("return", "none");
+        final boolean stopOnError = a.optBoolean("stop_on_error", true);
+        final GestureService s = service();
+        final long deadline = SystemClock.uptimeMillis() + ACT_CAP_MS;
+        Set<String> before = null;
+        if (ret.equals("diff")) {
+            before = new HashSet<>();
+            try {
+                for (Element e : scan(false).elements) before.add(e.sig());
+            } catch (Fail ignored) {
+                // unreadable before: the diff will then list everything
+            }
+        }
+        McpAct.Result res = new McpAct.Result();
+        for (int i = 0; i < steps.size(); i++) {
+            if (SystemClock.uptimeMillis() >= deadline) {
+                res.add(i + 1, "time limit 60s");
+                break;
+            }
+            McpAct.Step st = steps.get(i);
+            String err = null;
+            try {
+                runStep(s, st, deadline);
+            } catch (Fail f) {
+                err = f.getMessage();
+            } catch (InterruptedException ie) {
+                throw ie;
+            } catch (Exception e) {
+                err = e.getClass().getSimpleName();
+            }
+            res.add(i + 1, err);
+            if (err != null) {
+                if (stopOnError) break;
+            } else {
+                settle(st);
+            }
+        }
+        StringBuilder out = new StringBuilder(res.toString());
+        if (ret.equals("screen") || ret.equals("diff")) {
+            try {
+                Scan sc = scan(true);
+                out.append('\n').append(ret.equals("screen") ? format(sc, "", false, 40, null)
+                        : format(sc, "", false, 30, before));
+            } catch (Fail f) {
+                out.append("\n(").append(f.getMessage()).append(')');
+            }
+        }
+        return out.toString();
+    }
+
+    /** Short pause so the UI can settle after a step that changes it. */
+    private static void settle(McpAct.Step st) throws InterruptedException {
+        long ms;
+        switch (st.kind) {
+            case OPEN_APP: ms = 600; break;
+            case PRESS: ms = 250; break;
+            case TYPE: ms = 100; break;
+            case WAIT: ms = 0; break;
+            default: ms = 200; break;
+        }
+        if (ms > 0) Thread.sleep(ms);
+    }
+
+    private void runStep(GestureService s, McpAct.Step st, long deadline) throws Exception {
+        switch (st.kind) {
+            case CLICK_INDEX:
+                clickElement(new JSONObject().put("index", st.index));
+                return;
+            case CLICK_TEXT:
+                retryFind(deadline, () -> clickElement(new JSONObject().put("text", st.text)));
+                return;
+            case TAP:
+                stroke("tap", st.n[0], st.n[1], st.n[0], st.n[1], 60);
+                return;
+            case LONG_PRESS:
+                stroke("long_press", st.n[0], st.n[1], st.n[0], st.n[1], st.n[2]);
+                return;
+            case SWIPE:
+                stroke("swipe", st.n[0], st.n[1], st.n[2], st.n[3], st.n[4]);
+                return;
+            case TYPE: {
+                JSONObject t = new JSONObject().put("text", st.text).put("append", st.append);
+                if (st.index >= 0) t.put("index", st.index);
+                retryFind(deadline, () -> typeText(t));
+                return;
+            }
+            case PRESS:
+                press(st.text);
+                return;
+            case OPEN_APP:
+                openApp(st.text);
+                return;
+            default:
+                waitStep(s, st, deadline);
+        }
+    }
+
+    private void waitStep(GestureService s, McpAct.Step st, long deadline) throws Exception {
+        if (st.sleepMs > 0) Thread.sleep(Math.max(0, Math.min(st.sleepMs, deadline - SystemClock.uptimeMillis())));
+        if (st.waitText == null && st.waitGone == null && st.waitApp == null) return;
+        long end = Math.min(SystemClock.uptimeMillis() + st.timeoutMs, deadline);
+        while (true) {
+            boolean ok = true;
+            if (st.waitApp != null) ok = st.waitApp.equals(onMain(3000, s::foregroundAppPkg));
+            if (ok && (st.waitText != null || st.waitGone != null)) {
+                Scan sc = null;
+                try {
+                    sc = scan(false);
+                } catch (Fail ignored) {
+                    // not readable right now: keep waiting
+                }
+                if (sc == null) {
+                    ok = false;
+                } else {
+                    boolean hasText = st.waitText == null, hasGone = false;
+                    for (Element e : sc.elements) {
+                        if (st.waitText != null && e.matches(st.waitText)) hasText = true;
+                        if (st.waitGone != null && e.matches(st.waitGone)) hasGone = true;
+                    }
+                    ok = hasText && !hasGone;
+                }
+            }
+            if (ok) return;
+            if (SystemClock.uptimeMillis() + 250 > end) {
+                throw new Fail("timeout " + (st.waitText != null ? "text '" + clip(st.waitText, 30) + "'"
+                        : st.waitGone != null ? "gone '" + clip(st.waitGone, 30) + "'" : "app " + st.waitApp));
+            }
+            Thread.sleep(250);
+        }
     }
 
     private String press(String key) throws Exception {
