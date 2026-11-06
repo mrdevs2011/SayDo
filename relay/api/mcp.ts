@@ -63,9 +63,11 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     { name: 'saydo', version: '1.0.0' },
     {
       instructions:
-        `Controls the Android phone "${name}" through SayDo. Start with device_status. ` +
-        'To act on the screen: read_screen (or screenshot), then click_element / type_text / swipe, ' +
-        'then read_screen again to confirm the result. Prefer run_macro when a recorded macro fits.',
+        `Phone "${name}". Start with device_status. Each call is slow: prefer act with several steps over single calls.\n` +
+        'Read the screen with read_screen and a query; click by text or number.\n' +
+        'Use read_notifications to answer "what came to me".\n' +
+        'screenshot is expensive: only when the screen tree is empty (games).\n' +
+        'Never send messages or change anything unless the user asked.',
     },
   );
 

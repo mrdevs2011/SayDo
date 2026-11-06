@@ -24,11 +24,9 @@ const KEYS = ['home', 'back', 'recents', 'notifications', 'quick_settings', 'loc
 export const actStep = z
   .object({
     click: z.union([z.number().int().min(0), z.string().min(1).max(200)]).optional(),
-    tap: z.tuple([px, px]).optional(),
-    long_press: z.union([z.tuple([px, px]), z.tuple([px, px, z.number().int().min(300).max(5000)])]).optional(),
-    swipe: z
-      .union([z.tuple([px, px, px, px]), z.tuple([px, px, px, px, z.number().int().min(50).max(5000)])])
-      .optional(),
+    tap: z.array(px).length(2).optional(),
+    long_press: z.array(px).min(2).max(3).optional().describe('[x,y,ms]'),
+    swipe: z.array(px).min(4).max(5).optional().describe('[x1,y1,x2,y2,ms]'),
     type: z.string().max(5000).optional(),
     index: z.number().int().min(0).optional(),
     append: z.boolean().optional(),
@@ -64,8 +62,7 @@ export const TOOLS: ToolDef[] = [
     name: 'device_status',
     title: 'Device status',
     description:
-      'Phone status: model, Android version, screen size, screen on/locked, app in front, battery, ' +
-      'whether accessibility (needed for control) and voice listening are on. Call this first.',
+      'Phone state: screen, app in front, battery, accessibility on/off. Call first.',
     input: {},
     timeoutSec: 20,
     readOnly: true,
@@ -73,7 +70,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_macros',
     title: 'List macros',
-    description: 'Lists the SayDo macros recorded on the phone (id, voice trigger, number of steps).',
+    description: 'Recorded SayDo macros: id, trigger, steps.',
     input: {},
     timeoutSec: 20,
     readOnly: true,
@@ -82,8 +79,7 @@ export const TOOLS: ToolDef[] = [
     name: 'run_macro',
     title: 'Run macro',
     description:
-      'Runs a recorded SayDo macro by id or by its voice trigger text, and waits until it finishes. ' +
-      'Returns whether it completed or at which step it stopped.',
+      'Runs a recorded macro by id or trigger and waits until it ends.',
     input: { macro: z.string().min(1).max(200).describe('Macro id or trigger text, e.g. "open youtube"') },
     timeoutSec: 240,
   },
@@ -116,9 +112,8 @@ export const TOOLS: ToolDef[] = [
     name: 'act',
     title: 'Act',
     description:
-      'Runs up to 15 steps in one call: {click:n|text}, {tap:[x,y]}, {long_press:[x,y,ms]}, {swipe:[x1,y1,x2,y2,ms]}, ' +
-      '{type:text,index?,append?}, {press:key}, {open_app:pkg}, {wait:{text?,gone?,app?,ms?,timeout?}}. ' +
-      'Click numbers come from the last read_screen. Returns "1 ok 2 FAIL reason", plus the screen if asked.',
+      'Up to 15 steps in one call: click (number|text), tap, long_press, swipe, type, press, open_app, wait ' +
+      '({text,gone,app,ms,timeout}). Returns "1 ok 2 FAIL why" and optionally the screen.',
     input: {
       steps: z.array(actStep).min(1).max(15),
       return: z.enum(['none', 'screen', 'diff']).optional().describe('none (default), screen, or diff (what changed)'),
@@ -143,8 +138,7 @@ export const TOOLS: ToolDef[] = [
     name: 'click_element',
     title: 'Click element',
     description:
-      'Clicks an element from the latest read_screen by its number, or the first element whose text, ' +
-      'description or view id contains `text`.',
+      'Clicks a read_screen number, or the element whose text/description/id contains `text`.',
     input: {
       index: z.number().int().min(0).optional(),
       text: z.string().min(1).max(200).optional(),
@@ -154,21 +148,21 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'tap',
     title: 'Tap',
-    description: 'Taps the screen at pixel coordinates.',
+    description: 'Taps pixel coordinates.',
     input: { x: px, y: px },
     timeoutSec: 20,
   },
   {
     name: 'long_press',
     title: 'Long press',
-    description: 'Presses and holds at pixel coordinates.',
+    description: 'Long press at pixel coordinates.',
     input: { x: px, y: px, duration_ms: z.number().int().min(300).max(5000).optional() },
     timeoutSec: 20,
   },
   {
     name: 'swipe',
     title: 'Swipe',
-    description: 'Swipes from (x1,y1) to (x2,y2) in pixels. Use to scroll: swipe up = scroll down.',
+    description: 'Swipes in pixels; swipe up scrolls down.',
     input: { x1: px, y1: px, x2: px, y2: px, duration_ms: z.number().int().min(50).max(5000).optional() },
     timeoutSec: 20,
   },
@@ -176,8 +170,7 @@ export const TOOLS: ToolDef[] = [
     name: 'type_text',
     title: 'Type text',
     description:
-      'Types text into an input field: the element with this read_screen number, or the focused field. ' +
-      'Replaces the field content unless append is true.',
+      'Sets text in a field (read_screen number, or the focused one); append keeps the old text.',
     input: {
       text: z.string().max(5000),
       index: z.number().int().min(0).optional(),
@@ -188,7 +181,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'press',
     title: 'System button',
-    description: 'Presses a system button or opens a system panel.',
+    description: 'System key or panel.',
     input: {
       key: z.enum(['home', 'back', 'recents', 'notifications', 'quick_settings', 'lock_screen', 'power_dialog']),
     },
@@ -197,14 +190,14 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'open_app',
     title: 'Open app',
-    description: 'Opens an installed app by package name (see list_apps).',
+    description: 'Opens an app by package name.',
     input: { package: z.string().min(3).max(200).regex(/^[A-Za-z0-9_.]+$/) },
     timeoutSec: 20,
   },
   {
     name: 'list_apps',
     title: 'List apps',
-    description: 'Lists launchable apps: label and package name.',
+    description: 'Launchable apps: label and package.',
     input: {},
     timeoutSec: 20,
     readOnly: true,
@@ -212,7 +205,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'wake_screen',
     title: 'Wake screen',
-    description: 'Turns the screen on if it is off. It does not unlock a secured lock screen.',
+    description: 'Turns the screen on (does not unlock).',
     input: {},
     timeoutSec: 20,
   },
