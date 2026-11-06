@@ -54,6 +54,10 @@ public class MainActivity extends AppCompatActivity implements
     private TextView hint, btnStart;
     private MacroAdapter adapter;
 
+    /** VoiceService state changes arrive on arbitrary threads; refresh the status text on the UI thread. */
+    private final VoiceService.StateListener voiceListener =
+            (state, text) -> ui.post(this::refreshUi);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -113,6 +117,7 @@ public class MainActivity extends AppCompatActivity implements
         MacroRepository.getInstance(this).addListener(this);
         SettingsRepository.getInstance(this).addListener(this);
 
+        VoiceService.addStateListener(voiceListener);
         updateMacroList(MacroRepository.getInstance(this).getAll());
         refreshUi();
         handleIntent(getIntent());
@@ -164,6 +169,7 @@ public class MainActivity extends AppCompatActivity implements
     @Override
     protected void onDestroy() {
         destroyed = true;
+        VoiceService.removeStateListener(voiceListener);
         MacroRepository.getInstance(this).removeListener(this);
         SettingsRepository.getInstance(this).removeListener(this);
         ui.removeCallbacksAndMessages(null);
