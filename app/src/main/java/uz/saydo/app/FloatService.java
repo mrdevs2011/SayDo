@@ -636,6 +636,9 @@ public class FloatService extends Service {
             try { w.removeView(recordView); } catch (Throwable ignored) { }
         }
         recordView = null;
+        // A pass still in flight must not leave the next recording's overlay swallowing touches.
+        passActive = false;
+        passStroke = null;
     }
 
     private void finishStroke(boolean cancelled, boolean inject) {
