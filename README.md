@@ -4,9 +4,10 @@ Say it — done. Voice-triggered touch macros for Android.
 
 Record a sequence of taps, holds and swipes with the floating bubble, give it a voice command, and SayDo replays it when you say the command.
 
-> **Status: beta.** Voice triggering and long-macro replay are not yet reliable on every device.
-> See [docs/ROADMAP.md](docs/ROADMAP.md) for the known problems and the plan, and
-> [docs/BENCHMARK.md](docs/BENCHMARK.md) for how reliability is measured.
+> **Status: beta.** Voice triggering and replay outside the Settings app are not verified.
+> See [docs/STATUS.md](docs/STATUS.md) for what has been seen working on a real phone and what has not,
+> [docs/PLAN.md](docs/PLAN.md) for the order of work, and [docs/BENCHMARK.md](docs/BENCHMARK.md) for how
+> reliability is measured.
 
 ---
 
@@ -16,8 +17,8 @@ Record a sequence of taps, holds and swipes with the floating bubble, give it a 
   device has one; otherwise it may fall back to the online Google engine. There can be short gaps between listening
   sessions where a command is missed.
 - **Gesture recording and replay.** Taps, holds and swipes are recorded with their timing and replayed through the
-  Accessibility service. Replay is time-based and does not yet check that the expected screen appeared, so long
-  macros can drift if an app loads slower than during recording.
+  Accessibility service. Before a step, replay waits for the recorded app to be in front (up to 8 s) and stops with
+  a message if it does not appear. Only short macros in the Settings app have been verified on a phone.
 - **Lock-screen macros.** Macros can be recorded and started from the lock screen. Screens that block accessibility
   (`FLAG_SECURE`, many banking and PIN screens) cannot be automated reliably.
 - **Guided setup.** The `START` button walks through only the permissions that are still missing (overlay,
@@ -35,7 +36,7 @@ Record a sequence of taps, holds and swipes with the floating bubble, give it a 
 ## Known limitations
 
 - English triggers only.
-- Replay is open-loop: one failed step is not detected, and the following steps continue on the wrong screen.
+- Replay checks the app (package) of each step, not the exact screen inside the app.
 - The app's own "done" message is not proof that the macro succeeded.
 - Background survival depends on the phone's battery settings.
 
@@ -43,7 +44,8 @@ Record a sequence of taps, holds and swipes with the floating bubble, give it a 
 
 ## Documentation
 
-- [Roadmap](docs/ROADMAP.md) — reliability plan and stage criteria
+- [Status](docs/STATUS.md) and [Plan](docs/PLAN.md) — what works on a phone, what is next
+- [Roadmap](docs/ROADMAP.md) — older reliability plan (superseded by the plan where they differ)
 - [Benchmark protocol](docs/BENCHMARK.md) — how to measure a release
 - [Architecture](docs/ARCHITECTURE.md)
 - [Reliability & OEM guide](docs/RELIABILITY.md)
