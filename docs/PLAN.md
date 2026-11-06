@@ -14,8 +14,8 @@ recording and replay pass.
 - Result decides Stage 1.
 
 Result: passed on a Galaxy S22+ for Settings-only paths (see `docs/STATUS.md`). The current
-design stays for now. Before Stage 1 is closed, replay needs testing in real apps, and START
-button overlap and replay speed need fixing.
+design stays for now. Since then the START button overlap and the replay delay for unusable anchors
+are fixed and verified. Before Stage 1 is closed, replay still needs testing in real apps.
 
 ## Stage 1: Decide on the recording and replay core
 
@@ -39,13 +39,17 @@ Keep: `TriggerMatcher`, `MacroRepository`, `Setup`, main UI.
 - Prototype on-device keyword recognition (Vosk, grammar limited to saved triggers).
 - Switch only if it clearly beats the baseline. This should also remove the restart beeps.
 
-## Stage 4: Cleanup
+## Stage 4: Cleanup (mostly done)
 
-- Delete unused `kernel/` code; move the few used pieces out first.
-- Remove `OMEGA_VERIFICATION_CERTIFICATE.md` and correct `ARCHITECTURE.md` and `RELIABILITY.md`.
-- Replace the "Device assistance app" setup step.
+- Done: unused `kernel/` code deleted; the used classes stay in `kernel/` (moving them out is optional).
+- Done: Omega certificate removed; README, ARCHITECTURE, RELIABILITY and ROADMAP corrected.
+- Done: first START no longer sends the user to the "Digital assistant app" page; ERROR_CLIENT loop fixed.
+- Open: beeps from Google's speech service at each session start and end; top-edge swipe not recorded.
 
 ## Stage 5: MCP
 
-Test on a phone only after Stages 0-3. It controls the phone remotely, so review token handling,
-rate limits and open device registration before anyone else uses it.
+Test on a phone only after Stages 0-3. It controls the phone remotely.
+
+- Relay review done in git (rate limits, Origin check, queue and status caps, token-hash takeover check), **not deployed**.
+  The owner decides on deployment, on the token in the URL path, and on closing registration (see the review notes).
+- Not started: MCP on the phone, with the voice gate and MCP both still off by default.

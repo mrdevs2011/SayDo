@@ -1,13 +1,13 @@
 # SayDo status
 
-Last updated: 2026-11-06. Version on `main`: 2.12.0 (`1dffca6`).
+Last updated: 2026-11-06. Version on `main`: 2.12.0 (versionCode 25). Newest verified-on-phone builds are listed per row.
 
 Only what was observed on a real phone counts as working. Unit tests run on a JVM with Android
 stubbed, so they cannot prove on-device behaviour.
 
 ## State by feature
 
-Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Settings app only.
+Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Settings app only. Later fixes were checked on the same phone with the builds named in the Evidence column. The cleanup commits after `13d19b0` (removal of unused `kernel/` code, quieter replay log, relay hardening) are covered by the final smoke test described under "Cleanup check" below.
 
 | Feature | State | Evidence |
 |---|---|---|
@@ -22,28 +22,44 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | Stops on a wrong screen | Works once | 1/1: expected `com.android.settings`, saw the launcher, no tap sent. The on-screen stop message was not captured |
 | Replay speed | **Improved, partly verified** | Was about 6 s per step for a 3 s recorded gap. Cause found for anchors with no id/text/description: they can never match but were waited on for 2.5 s. Fixed in `97f800d`. S22+: a 2-swipe macro (both anchors unusable) replayed with 0-2 ms wait and 2.9 s between steps (recorded 2.5 s + dispatch). Anchors that can match were not retested; `Play:` logs now show scan and resolve times |
 | Other apps, slow screens, long idle gaps | **Not tested** | |
-| Voice triggers | **Not tested** | `onError code=5 CLIENT` appears about once a second in the log |
+| Voice, ERROR_CLIENT loop | **Fixed** (another session, own evidence) | Cause: SayDo's own audio-focus request was taken away each time the recognizer started, which cancelled the session. In a 60 s silent window: 40 CLIENT errors and 40 starts before, 0 CLIENT errors and 9 starts after (`13d19b0`) |
+| Voice triggers, recognition quality | **Not tested** | No spoken trigger has been measured |
+| First START | **Changed** (`58286b2`) | Asks only for overlay, accessibility, microphone, notifications. Battery exemption is a one-time optional prompt; speech pack status is shown in the app |
+| Status text on main screen | **Changed** (`e0964b2`) | Follows VoiceService state; no longer stuck on "Starting" |
+| Delete | **Changed** (`184a532`) | Confirmation dialog instead of tap-twice |
+| Pause before a step with a known app | **Capped at 3 s** (`a46f7a4`) | An 8.14 s recorded pause replayed as 3 s; logged when capped |
 | Voice gate | **Not tested** | Off by default |
 | MCP relay | Deployed, E2E test passes locally | Simulated phone only |
 | MCP on the phone | **Not tested** | Off by default |
 
-## Known bugs
+## Fixed, with evidence
 
-1. ~~START button covers the list.~~ Fixed in `97f800d`: the list now ends above the button (S22+: list bottom y=2036, button top y=2059). Not re-tested with 8+ macros.
-2. **Slow replay** for anchors that can match: not measured yet.
-3. **Voice `CLIENT` error** roughly once per second; may be what causes the beeps. Not investigated.
-4. **Stale status text.** The main screen stays on "Starting..." until it is reopened.
-5. **Confusing first START.** On a fresh install it sends the user to the Samsung battery page, then to "Digital assistant app", where there is nothing to do.
-6. **Status-bar swipe not recorded.** A swipe starting at the very top edge is not captured by the overlay.
-7. **Delete button** needs two taps within about 2 s; easy to miss.
-8. **Accessibility via ADB** right after install sometimes does not stick; setting it again works.
-9. **Speech pack.** A "Downloading offline English voice pack" toast appears; the system dialog over other apps was not seen again.
+- START button covering the list (`97f800d`): list bottom y=2036, button top y=2059 on the S22+. Not re-tested with 8+ macros.
+- Anchors that can never match cost 2.5 s per step (`97f800d`): fixed; a 2-swipe macro replayed with 2.9 s between steps.
+- One tap = one stroke, saving, short Settings-only replay: see the table.
+- Voice `ERROR_CLIENT` loop, stale "Starting" status, confusing first START, tap-twice delete, long pauses: see the table.
+
+## Still open
+
+1. **Beeps.** Google's own speech service plays a sound at the start and end of each listening session, about every 5 s. Not muted, because that is not clearly safe.
+2. **Top-edge swipe is not recorded.** The status-bar region belongs to SystemUI; probably not fixable from the overlay.
+3. **Voice recognition quality** is unmeasured.
+4. **Voice gate** is untested (off by default).
+5. **Replay in third-party apps, slow screens, long idle gaps** are untested.
+6. **MCP on the phone** is untested (off by default). The relay has an end-to-end test with a simulated phone only. Hardening in git (rate limits, Origin check, caps) is **not deployed**; owner decisions are in the relay review notes of the final report.
+7. **8+ macros on the main screen** not checked.
+8. **Uzbek triggers** are not supported or tested.
+9. Slow replay for anchors that *can* match: not measured.
+10. Accessibility via ADB right after install sometimes does not stick; setting it again works.
+11. The on-screen "stopped on a wrong screen" message was never captured.
+
+## Cleanup check
+
+Removed unused code under `kernel/` (daemon, mesh, Vulkan pipeline, chaos engine, vault and others; `SayDoKernel.start()` was never called) and the docs that described it. Kept the classes the app uses: `NodeAnchor`, `SmartGestureDispatcher`, `MacroStudioActivity`, `AppShortcutManager`, `ExecutionHudOverlay`, `SayDoTileService`, `ParametricMatcher`, `MultilingualMatcher`, `ContextMemory`. Compile check, CI build and CI unit tests are the evidence; the phone smoke test result is in the final report (not repeated here unless recorded in a later edit).
 
 ## Corrections to earlier claims
 
 - The "85-95% for short macros" figure was a guess, and too optimistic.
-- `docs/OMEGA_VERIFICATION_CERTIFICATE.md` and the "0 failures" claim are not reliable: 6 tests were
-  failing at the time.
-- `docs/ROADMAP.md` says anchors permanently change coordinates. That is wrong: `parse()` builds new
-  objects per run.
+- The "0 failures" claim in the old Omega certificate was false (6 tests were failing). The certificate is deleted.
+- `docs/ROADMAP.md` said anchors permanently change coordinates. That was wrong (`parse()` builds new objects per run); the line is corrected.
 - Replay reliability, voice accuracy and battery use have not been measured.
