@@ -1,9 +1,11 @@
 import { bodyObject, json, type Req, type Res } from '../../lib/http.js';
-import { authDevice, touchDevice } from '../../lib/device.js';
+import { authDevice, touchDevice, RateLimited } from '../../lib/device.js';
 import { blpop, keys, redis, PRESENCE_TTL_SEC } from '../../lib/store.js';
 
 /** How long one poll waits for a command. The phone re-polls immediately after. */
 const WAIT_SEC = 25;
+/** Largest status snapshot kept in Redis (characters of JSON). */
+const MAX_STATUS_CHARS = 4096;
 
 /**
  * POST /api/device/poll   (X-Device-Id + Bearer device secret)
@@ -14,11 +16,19 @@ const WAIT_SEC = 25;
  */
 export default async function handler(req: Req, res: Res): Promise<void> {
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
-  const id = await authDevice(req);
+  let id: string | null;
+  try {
+    id = await authDevice(req);
+  } catch (e) {
+    if (e instanceof RateLimited) return json(res, 429, { error: 'too_many_requests' });
+    throw e;
+  }
   if (!id) return json(res, 401, { error: 'unauthorized' });
 
   const r = await redis();
-  const status = bodyObject(req).status;
+  // The status goes into Redis on every poll: keep it small.
+  let status: unknown = bodyObject(req).status;
+  if (status !== undefined && JSON.stringify(status).length > MAX_STATUS_CHARS) status = { truncated: true };
   await r.set(keys.seen(id), JSON.stringify({ at: Date.now(), status: status ?? null }), { EX: PRESENCE_TTL_SEC });
   await touchDevice(id);
 

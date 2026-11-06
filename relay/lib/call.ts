@@ -5,6 +5,9 @@ export type Content =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string };
 
+/** Commands that may wait for one phone; more are refused so a stuck phone cannot grow the queue. */
+const MAX_QUEUE = 25;
+
 export type CallResult = { content: Content[]; isError?: boolean };
 
 function text(t: string, isError = false): CallResult {
@@ -45,6 +48,10 @@ export async function callDevice(
         'or Android stopped the app. Ask the user to open SayDo and check Settings → MCP.',
       true,
     );
+  }
+
+  if ((await r.lLen(keys.queue(deviceId))) >= MAX_QUEUE) {
+    return text('The phone has too many unanswered commands waiting. Try again in a moment.', true);
   }
 
   const cmdId = randomUUID();
