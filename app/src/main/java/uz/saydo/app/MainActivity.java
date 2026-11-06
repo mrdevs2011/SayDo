@@ -390,27 +390,23 @@ public class MainActivity extends AppCompatActivity implements
 
     @Override
     public void onDelete(String macroId) {
-        if (macroId == null) return;
-        String armed = adapter.getArmedDeleteId();
-        if (!macroId.equals(armed)) {
-            adapter.armDelete(macroId);
-            toast("Tap again to delete");
-            ui.postDelayed(() -> {
-                if (!destroyed && macroId.equals(adapter.getArmedDeleteId())) {
-                    adapter.armDelete(null);
-                }
-            }, 2500);
-            return;
+        if (macroId == null || destroyed) return;
+        String name = macroId;
+        for (Macro m : MacroRepository.getInstance(this).getAll()) {
+            if (m != null && macroId.equals(m.id)) {
+                name = m.trigger;
+                break;
+            }
         }
-
-        // Armed confirmation matched -> Delete by UUID
-        adapter.armDelete(null);
-        boolean deleted = MacroRepository.getInstance(this).delete(macroId);
-        if (deleted) {
-            toast("Deleted");
-        } else {
-            toast("Could not delete");
-        }
+        final String idToDelete = macroId;
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Delete '" + name + "'?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> {
+                    boolean deleted = MacroRepository.getInstance(this).delete(idToDelete);
+                    toast(deleted ? "Deleted" : "Could not delete");
+                })
+                .show();
     }
 
     private void toast(String message) {

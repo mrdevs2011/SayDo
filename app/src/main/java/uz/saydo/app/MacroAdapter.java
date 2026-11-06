@@ -29,7 +29,6 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
 
     private final List<Macro> items = new ArrayList<>();
     private final Listener listener;
-    private String armedDeleteId = null;
 
     MacroAdapter(Listener listener) {
         this.listener = listener;
@@ -41,25 +40,7 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
         if (newItems != null) {
             items.addAll(newItems);
         }
-        armedDeleteId = null;
         notifyDataSetChanged();
-    }
-
-    void armDelete(String macroId) {
-        String prev = armedDeleteId;
-        armedDeleteId = macroId;
-        if (prev != null) {
-            int prevIdx = indexOf(prev);
-            if (prevIdx >= 0) notifyItemChanged(prevIdx);
-        }
-        if (macroId != null) {
-            int newIdx = indexOf(macroId);
-            if (newIdx >= 0) notifyItemChanged(newIdx);
-        }
-    }
-
-    String getArmedDeleteId() {
-        return armedDeleteId;
     }
 
     private int indexOf(String macroId) {
@@ -101,11 +82,6 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
         String metaText = actions + " actions · " + String.format(Locale.US, "%.1f", secs) + "s"
                 + (m.locked ? " · from lock screen" : "");
         h.meta.setText(metaText);
-
-        final boolean isArmed = m.id.equals(armedDeleteId);
-        h.btnDel.setAlpha(isArmed ? 1.0f : 0.85f);
-        h.btnDel.setScaleX(isArmed ? 1.15f : 1.0f);
-        h.btnDel.setScaleY(isArmed ? 1.15f : 1.0f);
 
         h.btnPlay.setOnClickListener(new View.OnClickListener() {
             @Override
