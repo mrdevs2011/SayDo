@@ -5,13 +5,17 @@ This replaces the order of work in `docs/ROADMAP.md`.
 **Rule: a stage closes only after it passes on a real phone, with evidence.** No new features until
 recording and replay pass.
 
-## Stage 0: Verify the triple-tap fix (now)
+## Stage 0: Verify the triple-tap fix (done 2026-11-06, passed)
 
 - Install `a0fe5f0` on a test phone.
 - Record a short macro in a harmless app. Pass: one tap gives one stroke in the `Rec:` logs.
 - Replay it. Pass: the app ends on the same screen as the recording, each step once.
 - Try to reproduce the lost recording.
 - Result decides Stage 1.
+
+Result: passed on a Galaxy S22+ for Settings-only paths (see `docs/STATUS.md`). The current
+design stays for now. Before Stage 1 is closed, replay needs testing in real apps, and START
+button overlap and replay speed need fixing.
 
 ## Stage 1: Decide on the recording and replay core
 
