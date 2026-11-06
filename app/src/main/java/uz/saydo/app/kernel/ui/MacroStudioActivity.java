@@ -8,6 +8,9 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.app.AlertDialog;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -77,6 +80,13 @@ public final class MacroStudioActivity extends Activity {
         tvSubtitle.setPadding(0, 8, 0, 24);
         root.addView(tvSubtitle);
 
+        // Info for AI assistants: description, other names, sensitive flag
+        Button btnInfo = new Button(this);
+        btnInfo.setText("Info (AI)");
+        btnInfo.setTextColor(Color.parseColor("#CBD5E1"));
+        btnInfo.setOnClickListener(v -> showInfoDialog());
+        root.addView(btnInfo);
+
         // Scrollable timeline
         ScrollView scrollView = new ScrollView(this);
         LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
@@ -109,6 +119,44 @@ public final class MacroStudioActivity extends Activity {
         root.addView(btnSave, btnParams);
 
         setContentView(root);
+    }
+
+    /** Description, alternative names and the sensitive flag: what AI assistants see when choosing a macro. */
+    private void showInfoDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(40, 16, 40, 0);
+
+        final EditText desc = new EditText(this);
+        desc.setHint("Nima qiladi (tavsif)");
+        desc.setText(currentMacro.description);
+        desc.setMinLines(2);
+        box.addView(desc);
+
+        final EditText aliases = new EditText(this);
+        aliases.setHint("Boshqa nomlar, vergul bilan (istalgan tilda)");
+        aliases.setText(android.text.TextUtils.join(", ", currentMacro.aliases));
+        box.addView(aliases);
+
+        final CheckBox sens = new CheckBox(this);
+        sens.setText("Maxfiy (pul, bank, o'chirish, xabar yuborish)");
+        sens.setChecked(uz.saydo.app.McpGuard.isSensitive(currentMacro));
+        box.addView(sens);
+
+        new AlertDialog.Builder(this)
+                .setTitle(currentMacro.trigger)
+                .setView(box)
+                .setPositiveButton("Saqlash", (d, w) -> {
+                    List<String> al = new ArrayList<>();
+                    for (String a : aliases.getText().toString().split(",")) {
+                        if (!a.trim().isEmpty()) al.add(a.trim());
+                    }
+                    currentMacro = currentMacro.withInfo(desc.getText().toString(), al, sens.isChecked(), true);
+                    repository.save(currentMacro);
+                    Toast.makeText(this, "Saqlandi", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Bekor", null)
+                .show();
     }
 
     private void renderTimelineSteps() {

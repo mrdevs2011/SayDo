@@ -615,6 +615,7 @@ public class FloatService extends Service {
                         lockedRec,
                         System.currentTimeMillis(),
                         dur);
+                macro = McpMacros.withAutoInfo(this, macro); // description from the steps, money apps -> sensitive
                 MacroRepository.getInstance(this).save(macro);
                 toast("Saved: " + pendingTrigger);
             } catch (Throwable e) {

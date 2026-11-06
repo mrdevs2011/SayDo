@@ -38,7 +38,7 @@ public class McpActivity extends Activity implements McpService.Listener {
     private McpConfig cfg;
     private float d;
 
-    private Switch enable, full, aiNotif;
+    private Switch enable, full, aiNotif, phoneApproval, moneyApps;
     private TextView status, endpoint, tokenView, hint;
     private EditText nameInput, relayInput;
     private Button battery;
@@ -83,6 +83,13 @@ public class McpActivity extends Activity implements McpService.Listener {
         root.addView(nw);
         Button notifAccess = button("Bildirishnomalarga ruxsat (access)", "#64748B");
         root.addView(notifAccess);
+
+        phoneApproval = switchRow(root, "Maxfiy makroda telefonda ham ruxsat so'rash");
+        root.addView(text("AI maxfiy makroni (pul, bank) ishga tushirishi uchun ham AI'ning tasdig'i, ham shu "
+                + "telefondagi \"Ruxsat\" kerak. O'chirsangiz faqat AI tasdig'i yetadi.", 12, false, "#94A3B8"));
+        moneyApps = switchRow(root, "AI pul ilovalarida ishlay olsin");
+        root.addView(text("⚠ Odatda o'chiq: pul/bank ilovasi ochiq bo'lsa AI bosa olmaydi va yoza olmaydi "
+                + "(ekranni o'qish ishlaydi).", 12, false, "#FBBF24"));
 
         status = text("", 14, true, "#E2E8F0");
         status.setPadding(0, dp(12), 0, dp(4));
@@ -133,6 +140,10 @@ public class McpActivity extends Activity implements McpService.Listener {
             render();
         });
         full.setOnCheckedChangeListener((b, on) -> cfg.setFullControl(on));
+        phoneApproval.setChecked(cfg.approveSensitiveOnPhone());
+        phoneApproval.setOnCheckedChangeListener((b, on) -> cfg.setApproveSensitiveOnPhone(on));
+        moneyApps.setChecked(cfg.allowAiInMoneyApps());
+        moneyApps.setOnCheckedChangeListener((b, on) -> cfg.setAllowAiInMoneyApps(on));
         aiNotif.setChecked(cfg.aiNotifications());
         aiNotif.setOnCheckedChangeListener((b, on) -> {
             cfg.setAiNotifications(on);

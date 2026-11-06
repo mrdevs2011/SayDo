@@ -24,6 +24,8 @@ final class McpConfig {
     private static final String K_ENABLED = "enabled";
     private static final String K_FULL = "full_control";
     private static final String K_AI_NOTIF = "ai_notifications";
+    private static final String K_PHONE_APPROVAL = "approve_sensitive_on_phone";
+    private static final String K_MONEY_APPS = "allow_ai_money_apps";
     private static final String K_RELAY = "relay";
     private static final String K_ID = "device_id";
     private static final String K_SECRET = "device_secret";
@@ -73,6 +75,14 @@ final class McpConfig {
     /** Lets the AI read notifications (read_notifications). Off by default; they may hold private messages. */
     boolean aiNotifications() { return p.getBoolean(K_AI_NOTIF, false); }
     void setAiNotifications(boolean on) { p.edit().putBoolean(K_AI_NOTIF, on).apply(); }
+
+    /** Sensitive macros asked for by the AI also need an Allow on the phone (default on). */
+    boolean approveSensitiveOnPhone() { return p.getBoolean(K_PHONE_APPROVAL, true); }
+    void setApproveSensitiveOnPhone(boolean on) { p.edit().putBoolean(K_PHONE_APPROVAL, on).apply(); }
+
+    /** Lets act/tap/click/type work while a money app is in front (default off). */
+    boolean allowAiInMoneyApps() { return p.getBoolean(K_MONEY_APPS, false); }
+    void setAllowAiInMoneyApps(boolean on) { p.edit().putBoolean(K_MONEY_APPS, on).apply(); }
 
     String relay() {
         String r = p.getString(K_RELAY, DEFAULT_RELAY);

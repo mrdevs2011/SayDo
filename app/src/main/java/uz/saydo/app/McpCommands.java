@@ -99,10 +99,12 @@ final class McpCommands {
 
     private final Context ctx;
     private final McpConfig cfg;
+    private final McpMacros macros;
 
     McpCommands(Context ctx, McpConfig cfg) {
         this.ctx = ctx.getApplicationContext();
         this.cfg = cfg;
+        this.macros = new McpMacros(this.ctx, cfg);
     }
 
     /** Thrown for user-facing failures; the message goes to the AI. */
@@ -152,15 +154,19 @@ final class McpCommands {
     private void run(String tool, JSONObject a, JSONArray content) throws Exception {
         switch (tool) {
             case "device_status": text(content, status().toString(2)); return;
-            case "list_macros": text(content, listMacros()); return;
-            case "run_macro": text(content, runMacro(a.optString("macro", ""))); return;
+            case "find_macro": text(content, macros.findMacro(a)); return;
+            case "list_macros": text(content, macros.listMacros(a)); return;
+            case "describe_macro": text(content, macros.describeMacro(a)); return;
+            case "set_macro_info": text(content, macros.setMacroInfo(a)); return;
+            case "run_macro": text(content, macros.runMacro(a)); return;
             case "read_notifications": text(content, readNotifications(a)); return;
             default: break;
         }
         if (!cfg.fullControl()) {
             throw new Fail("Screen control is switched off on the phone (SayDo → MCP → Full control). "
-                    + "Only device_status, list_macros and run_macro are allowed.");
+                    + "Only device_status and the macro tools are allowed.");
         }
+        guardScreenTool(tool);
         switch (tool) {
             case "read_screen": text(content, readScreen(a)); return;
             case "screenshot": screenshot(content, a.optInt("max_width", 540), a.optInt("quality", 50)); return;
@@ -170,6 +176,7 @@ final class McpCommands {
                     a.optInt("duration_ms", 800))); return;
             case "swipe": text(content, stroke("swipe", a.getInt("x1"), a.getInt("y1"), a.getInt("x2"), a.getInt("y2"),
                     a.optInt("duration_ms", 350))); return;
+            case "scroll_to": text(content, scrollTo(a)); return;
             case "act": text(content, act(a)); return;
             case "type_text": text(content, typeText(a)); return;
             case "press": text(content, press(a.optString("key", ""))); return;
@@ -189,7 +196,7 @@ final class McpCommands {
 
     // ------------------------------------------------------------------ helpers
 
-    private static GestureService service() throws Fail {
+    static GestureService service() throws Fail {
         GestureService s = GestureService.instance;
         if (s == null) {
             throw new Fail("SayDo Accessibility service is off on the phone, so the screen cannot be "
@@ -199,7 +206,7 @@ final class McpCommands {
     }
 
     /** Run on the main thread and wait. */
-    private static <T> T onMain(long timeoutMs, MainTask<T> task) throws Exception {
+    static <T> T onMain(long timeoutMs, MainTask<T> task) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) return task.run();
         AtomicReference<T> res = new AtomicReference<>();
         AtomicReference<Exception> err = new AtomicReference<>();
@@ -218,7 +225,7 @@ final class McpCommands {
         return res.get();
     }
 
-    private interface MainTask<T> {
+    interface MainTask<T> {
         T run() throws Exception;
     }
 
@@ -229,6 +236,25 @@ final class McpCommands {
     private static String clip(String s, int max) {
         s = s.replace('\n', ' ').trim();
         return s.length() > max ? s.substring(0, max) + "…" : s;
+    }
+
+    // ------------------------------------------------------------------ money-app guard
+
+    private static final java.util.Set<String> GUARDED = new HashSet<>(java.util.Arrays.asList(
+            "tap", "long_press", "swipe", "click_element", "type_text"));
+
+    /** Tools that act on the screen refuse while a money app is in front (unless the owner allowed it). */
+    private void guardScreenTool(String tool) throws Exception {
+        if (!GUARDED.contains(tool)) return;
+        guardForeground();
+    }
+
+    private void guardForeground() throws Exception {
+        if (cfg.allowAiInMoneyApps()) return;
+        final GestureService s = service();
+        String pkg = onMain(3000, s::foregroundAppPkg);
+        String refusal = McpGuard.screenActionRefusal(pkg, false);
+        if (refusal != null) throw new Fail(refusal);
     }
 
     // ------------------------------------------------------------------ status & macros
@@ -271,65 +297,6 @@ final class McpCommands {
         } catch (Exception ignored) {
         }
         return o;
-    }
-
-    private String listMacros() {
-        List<Macro> all = MacroRepository.getInstance(ctx).getAll();
-        if (all.isEmpty()) return "No macros recorded on this phone.";
-        StringBuilder sb = new StringBuilder();
-        for (Macro m : all) {
-            sb.append("- id=").append(m.id)
-              .append(" trigger=\"").append(m.trigger).append('"')
-              .append(" steps=").append(m.gestures.size())
-              .append(m.locked ? " (lock-screen macro)" : "")
-              .append('\n');
-        }
-        return sb.toString().trim();
-    }
-
-    private Macro findMacro(String key) throws Fail {
-        if (key == null || key.trim().isEmpty()) throw new Fail("Give a macro id or trigger.");
-        List<Macro> all = MacroRepository.getInstance(ctx).getAll();
-        String k = key.trim();
-        for (Macro m : all) if (m.id.equals(k)) return m;
-        String nk = TriggerMatcher.norm(k);
-        for (Macro m : all) if (TriggerMatcher.norm(m.trigger).equals(nk)) return m;
-        Macro best = null;
-        double bestScore = 0;
-        for (Macro m : all) {
-            double sc = TriggerMatcher.score(nk, TriggerMatcher.norm(m.trigger));
-            if (sc > bestScore) {
-                bestScore = sc;
-                best = m;
-            }
-        }
-        if (best != null && bestScore >= TriggerMatcher.EXACT) return best;
-        throw new Fail("No macro matches \"" + key + "\". Use list_macros.");
-    }
-
-    private String runMacro(String key) throws Exception {
-        final Macro m = findMacro(key);
-        service(); // must be on
-        final CountDownLatch done = new CountDownLatch(1);
-        final boolean[] completed = {false};
-        int code = onMain(5000, () -> {
-            Metrics.nextRunSource = "mcp";
-            return Runner.run(ctx, m, ok -> {
-                completed[0] = ok;
-                done.countDown();
-            });
-        });
-        if (code == Runner.NO_ACCESSIBILITY) throw new Fail("Accessibility is off.");
-        if (code == Runner.LOCKED) throw new Fail("The phone is locked; this macro needs it unlocked.");
-        if (code != Runner.OK) throw new Fail("Macro could not start (code " + code + ").");
-        if (!done.await(230, TimeUnit.SECONDS)) {
-            return "Macro \"" + m.trigger + "\" is still running after 230 s.";
-        }
-        if (completed[0]) return "Macro \"" + m.trigger + "\" completed (" + m.gestures.size() + " steps).";
-        GestureService s = GestureService.instance;
-        int f = s == null ? -1 : s.lastRunFirstFail();
-        throw new Fail("Macro \"" + m.trigger + "\" stopped" + (f >= 0 ? " at step " + (f + 1) : "")
-                + ". Use read_screen to see where the phone is.");
     }
 
     // ------------------------------------------------------------------ notifications
@@ -487,6 +454,42 @@ final class McpCommands {
                 + "; multiply image coords by " + String.format(Locale.US, "%.2f", wh[0] / (float) origW));
     }
 
+    /** Swipes until an element matching `text` (case, accent and script blind) is on screen. */
+    private String scrollTo(JSONObject a) throws Exception {
+        final String needle = a.optString("text", "").trim();
+        if (needle.isEmpty()) throw new Fail("give text");
+        final String dir = a.optString("direction", "down");
+        final int max = Math.max(1, Math.min(20, a.optInt("max_swipes", 8)));
+        if (!dir.equals("down") && !dir.equals("up") && !dir.equals("left") && !dir.equals("right")) {
+            throw new Fail("direction: down, up, left or right");
+        }
+        String prev = null;
+        for (int i = 0; ; i++) {
+            Scan sc = scan(true);
+            for (int k = 0; k < sc.elements.size(); k++) {
+                if (sc.elements.get(k).matches(needle)) {
+                    return "found after " + i + " swipes: " + sc.elements.get(k).line(k, false);
+                }
+            }
+            StringBuilder sig = new StringBuilder().append(sc.elements.size());
+            for (int k = 0; k < sc.elements.size() && k < 6; k++) sig.append('|').append(sc.elements.get(k).label());
+            if (!sc.elements.isEmpty()) sig.append('|').append(sc.elements.get(sc.elements.size() - 1).label());
+            if (sig.toString().equals(prev)) {
+                throw new Fail("'" + clip(needle, 40) + "' not found; the screen stopped moving after " + i + " swipes");
+            }
+            if (i >= max) throw new Fail("'" + clip(needle, 40) + "' not found after " + max + " swipes");
+            prev = sig.toString();
+            int w = sc.w, h = sc.h;
+            switch (dir) {
+                case "down": stroke("swipe", w / 2, h * 3 / 4, w / 2, h * 3 /10, 350); break;
+                case "up": stroke("swipe", w / 2, h * 3 / 10, w / 2, h * 3 / 4, 350); break;
+                case "right": stroke("swipe", w * 4 / 5, h / 2, w / 5, h / 2, 350); break;
+                default: stroke("swipe", w / 5, h / 2, w * 4 / 5, h / 2, 350); break;
+            }
+            Thread.sleep(400);
+        }
+    }
+
     private String clickElement(JSONObject a) throws Exception {
         final GestureService s = service();
         if (a.has("index")) {
@@ -495,7 +498,7 @@ final class McpCommands {
             if (i < 0 || i >= els.size()) throw new Fail("no element " + i + " (read_screen first)");
             return clickAt(s, els.get(i).bounds);
         }
-        final String needle = a.optString("text", "").trim().toLowerCase(Locale.ROOT);
+        final String needle = McpText.fold(a.optString("text", "").trim());
         if (needle.isEmpty()) throw new Fail("give index or text");
         Rect found = onMain(8000, () -> {
             AccessibilityNodeInfo root = s.getRootInActiveWindow();
@@ -508,8 +511,8 @@ final class McpCommands {
                 AccessibilityNodeInfo n = q.poll();
                 try {
                     if (n.isVisibleToUser()) {
-                        String t = str(n.getText()).trim().toLowerCase(Locale.ROOT);
-                        String d = str(n.getContentDescription()).trim().toLowerCase(Locale.ROOT);
+                        String t = McpText.fold(str(n.getText()).trim());
+                        String d = McpText.fold(str(n.getContentDescription()).trim());
                         String id = str(n.getViewIdResourceName()).toLowerCase(Locale.ROOT);
                         boolean isExact = t.equals(needle) || d.equals(needle);
                         if (isExact || (partial == null && (t.contains(needle) || d.contains(needle) || id.contains(needle)))) {
@@ -739,6 +742,13 @@ final class McpCommands {
     }
 
     private void runStep(GestureService s, McpAct.Step st, long deadline) throws Exception {
+        // The first screen was checked when act started; opening a money app mid-act must not slip through.
+        if (st.kind == McpAct.Kind.OPEN_APP) {
+            String r = McpGuard.openAppRefusal(st.text, cfg.allowAiInMoneyApps());
+            if (r != null) throw new Fail(r);
+        } else if (st.kind != McpAct.Kind.WAIT && st.kind != McpAct.Kind.PRESS) {
+            guardForeground();
+        }
         switch (st.kind) {
             case CLICK_INDEX:
                 clickElement(new JSONObject().put("index", st.index));
@@ -828,6 +838,8 @@ final class McpCommands {
     }
 
     private String openApp(String pkg) throws Exception {
+        String refusal = McpGuard.openAppRefusal(pkg, cfg.allowAiInMoneyApps());
+        if (refusal != null) throw new Fail(refusal);
         final GestureService s = service();
         final Intent i = ctx.getPackageManager().getLaunchIntentForPackage(pkg);
         if (i == null) throw new Fail("no app " + pkg + " (list_apps)");
