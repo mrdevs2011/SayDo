@@ -42,6 +42,7 @@ import java.util.UUID;
 
 import uz.saydo.app.data.Gesture;
 import uz.saydo.app.data.Macro;
+import uz.saydo.app.util.DebugLog;
 import uz.saydo.app.data.MacroRepository;
 import uz.saydo.app.data.SettingsRepository;
 
@@ -562,6 +563,7 @@ public class FloatService extends Service {
         recording = false;
         removeRecordLayer();
         refreshBubble();
+        DebugLog.i("Rec", "stop save=" + save + " strokes=" + gestures.size() + " trigger=" + pendingTrigger);
 
         if (save && !gestures.isEmpty() && !pendingTrigger.isEmpty()) {
             try {
@@ -687,8 +689,14 @@ public class FloatService extends Service {
             if (gestures.size() < MAX_GESTURES) {
                 gestures.add(curStroke);
                 saved = curStroke;
+                DebugLog.i("Rec", "stroke #" + gestures.size() + " " + curStroke.optString("type")
+                        + " x=" + curStroke.optDouble("x") + " y=" + curStroke.optDouble("y")
+                        + " dur=" + curStroke.optLong("dur") + " pkg=" + curStroke.optString("pkg")
+                        + " anchor=" + curStroke.has("anchor"));
             }
-        } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            DebugLog.e("Rec", "stroke lost: " + t);
+        }
         curStroke = null;
         curPath = null;
         if (recordView != null) recordView.clearVisual();
@@ -1116,6 +1124,7 @@ public class FloatService extends Service {
     }
 
     private void toast(final String msg) {
+        DebugLog.i("Toast", msg);
         h.post(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show());
     }
 
