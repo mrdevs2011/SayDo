@@ -57,12 +57,12 @@ final class McpFormat {
         return (pkg == null || pkg.isEmpty() ? "?" : pkg) + " " + w + "x" + h;
     }
 
-    /** Case-insensitive substring over the given fields; an empty query matches everything. */
+    /** Case, accent and Latin/Cyrillic blind substring over the given fields; an empty query matches everything. */
     static boolean matches(String query, String... fields) {
         if (query == null || query.isEmpty()) return true;
-        String q = query.toLowerCase(Locale.ROOT);
+        String q = McpText.fold(query);
         for (String f : fields) {
-            if (f != null && f.toLowerCase(Locale.ROOT).contains(q)) return true;
+            if (f != null && McpText.fold(f).contains(q)) return true;
         }
         return false;
     }

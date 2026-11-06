@@ -13,7 +13,7 @@ import uz.saydo.app.data.Macro;
  *  - whether a screen-control tool may act while a money app is in front.
  * The Android parts (the approval notification, the settings) call these and nothing else decides.
  */
-final class McpGuard {
+public final class McpGuard {
     private McpGuard() {}
 
     /** Package-name fragments of money apps (payments, banks, wallets, crypto). Lower case. */
@@ -40,7 +40,7 @@ final class McpGuard {
      * Effective sensitivity: the macro's own flag, or detected money use unless the owner has
      * looked at the flag in the app (then the owner's choice stands).
      */
-    static boolean isSensitive(Macro m) {
+    public static boolean isSensitive(Macro m) {
         return m.sensitive || (!m.sensitiveReviewed && touchesMoney(m));
     }
 
