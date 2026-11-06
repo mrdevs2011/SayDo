@@ -505,6 +505,10 @@ public class VoiceService extends Service implements
 
     private void ensureOfflineModel() {
         if (modelDownloadChecked || Build.VERSION.SDK_INT < 33 || recognizer == null) return;
+        // The download prompt is a system dialog: only show it while the user is inside SayDo.
+        // Over another app it would catch the taps of a running macro.
+        GestureService gs = GestureService.instance;
+        if (gs == null || !getPackageName().equals(gs.topApplicationPkg())) return;
         modelDownloadChecked = true;
         try {
             final Intent probe = buildIntent();
