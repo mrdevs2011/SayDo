@@ -138,7 +138,7 @@ public final class SmartGestureDispatcher {
                     if (bestNode != null && bestNode != root) recycleQuietly(bestNode);
                     bestScore = score;
                     bestNode = AccessibilityNodeInfo.obtain(current);
-                    if (score >= 1.05f) break; // exact match at the recorded place
+                    if (score >= 1.098f) break; // exact match within about 50 px of the recorded place
                 }
 
                 int childCount = current.getChildCount();
