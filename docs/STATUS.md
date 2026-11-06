@@ -20,7 +20,7 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | Replay, 12 steps | Works in narrow tests | 5/5, final screen only; intermediate screens not checked |
 | Swipe | Works | 3/3, list ended within about 13 px of the recording |
 | Stops on a wrong screen | Works once | 1/1: expected `com.android.settings`, saw the launcher, no tap sent. The on-screen stop message was not captured |
-| Replay speed | **Slow** | About 6 s per step even where the recorded gap was 3 s. Suspected: the 2.5 s anchor wait in `GestureService.awaitScreen`, unconfirmed |
+| Replay speed | **Improved, partly verified** | Was about 6 s per step for a 3 s recorded gap. Cause found for anchors with no id/text/description: they can never match but were waited on for 2.5 s. Fixed in `97f800d`. S22+: a 2-swipe macro (both anchors unusable) replayed with 0-2 ms wait and 2.9 s between steps (recorded 2.5 s + dispatch). Anchors that can match were not retested; `Play:` logs now show scan and resolve times |
 | Other apps, slow screens, long idle gaps | **Not tested** | |
 | Voice triggers | **Not tested** | `onError code=5 CLIENT` appears about once a second in the log |
 | Voice gate | **Not tested** | Off by default |
@@ -29,8 +29,8 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 
 ## Known bugs
 
-1. **START button covers the list.** With about 8 or more macros, the play button of a lower row sits under the big START/STOP button; tapping it toggles listening instead. (`activity_main.xml`)
-2. **Slow replay.** See above.
+1. ~~START button covers the list.~~ Fixed in `97f800d`: the list now ends above the button (S22+: list bottom y=2036, button top y=2059). Not re-tested with 8+ macros.
+2. **Slow replay** for anchors that can match: not measured yet.
 3. **Voice `CLIENT` error** roughly once per second; may be what causes the beeps. Not investigated.
 4. **Stale status text.** The main screen stays on "Starting..." until it is reopened.
 5. **Confusing first START.** On a fresh install it sends the user to the Samsung battery page, then to "Digital assistant app", where there is nothing to do.
