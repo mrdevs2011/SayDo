@@ -391,6 +391,21 @@ public class GestureService extends AccessibilityService {
         }, gap);
     }
 
+    private String lastPollLog = "";
+    private long lastPollLogAt;
+
+    /** Logs a wait-loop line only when its state changed or about once per second (poll runs every 125 ms). */
+    private void pollLog(String state) {
+        long now = SystemClock.uptimeMillis();
+        // Compare without the scan time so that a changing millisecond count is not a "state change".
+        String key = state.replaceAll("\\(scan \\d+ ms\\)", "");
+        if (!key.equals(lastPollLog) || now - lastPollLogAt >= 1000) {
+            lastPollLog = key;
+            lastPollLogAt = now;
+            DebugLog.i("Play", state);
+        }
+    }
+
     /** Polls until the recorded app is in front (or stops), then briefly for the anchor view. */
     private void awaitScreen(final List<G> list, final int i, final int tok, final int failures,
                              final long screenDeadline, final long anchorDeadline) {
@@ -400,7 +415,7 @@ public class GestureService extends AccessibilityService {
 
         if (!g.pkg.isEmpty()) {
             String cur = currentScreenPkg();
-            DebugLog.i("Play", "step " + (i + 1) + " " + g.type + " want=" + g.pkg + " cur=" + cur);
+            pollLog("step " + (i + 1) + " " + g.type + " want=" + g.pkg + " cur=" + cur);
             if (cur != null && !cur.equals(g.pkg)) {
                 if (now < screenDeadline) {
                     handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline,
@@ -422,8 +437,8 @@ public class GestureService extends AccessibilityService {
         if (usableAnchor(g.anchor) && now < anchorDeadline) {
             long t0 = SystemClock.uptimeMillis();
             boolean present = anchorPresent(g.anchor);
-            DebugLog.i("Play", "step " + (i + 1) + " anchor scan " + (SystemClock.uptimeMillis() - t0)
-                    + " ms present=" + present);
+            pollLog("step " + (i + 1) + " anchor present=" + present + " (scan "
+                    + (SystemClock.uptimeMillis() - t0) + " ms)");
             if (!present) {
                 // The view may still be loading; wait a little, then fall back to coordinates.
                 handler.postDelayed(() -> awaitScreen(list, i, tok, failures, screenDeadline, anchorDeadline), POLL_MS);
