@@ -95,6 +95,15 @@ public class MacroSearchTest {
     }
 
     @Test
+    public void goodMatchesReachTheGoodThreshold() {
+        for (String q : new String[]{"youtube ni ochib yoqtirgan musiqamni qoy", "включи любимую музыку на ютубе",
+                "ютуб", "pay with Payme", "telegram guruhlarini tekshir"}) {
+            List<MacroSearch.Hit> h = MacroSearch.rank(q, catalog(), 3, MacroSearch.MIN_SCORE);
+            assertTrue(q + " -> " + h.size(), !h.isEmpty() && h.get(0).score >= MacroSearch.GOOD);
+        }
+    }
+
+    @Test
     public void foldingBasics() {
         assertEquals("yutub", McpText.fold("Ютуб"));
         assertEquals("yuborish", McpText.fold("Юбориш"));
