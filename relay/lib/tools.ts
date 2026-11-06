@@ -127,6 +127,19 @@ export const TOOLS: ToolDef[] = [
     timeoutSec: ACT_TIMEOUT_SEC,
   },
   {
+    name: 'read_notifications',
+    title: 'Read notifications',
+    description:
+      'Recent notifications, newest first, "HH:mm App: title - text". Needs the owner to allow it in SayDo and in Android.',
+    input: {
+      limit: z.number().int().min(1).max(50).optional().describe('Default 15'),
+      app: z.string().min(1).max(100).optional().describe('Package or app name part'),
+      since_minutes: z.number().int().min(1).max(1440).optional(),
+    },
+    timeoutSec: 20,
+    readOnly: true,
+  },
+  {
     name: 'click_element',
     title: 'Click element',
     description:

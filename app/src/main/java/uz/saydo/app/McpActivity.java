@@ -38,7 +38,7 @@ public class McpActivity extends Activity implements McpService.Listener {
     private McpConfig cfg;
     private float d;
 
-    private Switch enable, full;
+    private Switch enable, full, aiNotif;
     private TextView status, endpoint, tokenView, hint;
     private EditText nameInput, relayInput;
     private Button battery;
@@ -75,6 +75,14 @@ public class McpActivity extends Activity implements McpService.Listener {
         full = switchRow(root, "To'liq boshqaruv (ekranni o'qish, bosish, yozish, skrinshot)");
         root.addView(text("O'chiq bo'lsa AI faqat holatni ko'radi va makrolarni ishga tushiradi.",
                 12, false, "#94A3B8"));
+
+        aiNotif = switchRow(root, "AI bildirishnomalarni o'qiy olsin");
+        TextView nw = text("⚠ Bildirishnomalarda shaxsiy xabarlar bo'lishi mumkin. Yoqsangiz, AI ularni ko'ra oladi "
+                + "(oxirgi 100 tasi faqat xotirada, diskka yozilmaydi). Android'da \"Bildirishnomalarga kirish\" "
+                + "ruxsati ham kerak.", 12, false, "#FBBF24");
+        root.addView(nw);
+        Button notifAccess = button("Bildirishnomalarga ruxsat (access)", "#64748B");
+        root.addView(notifAccess);
 
         status = text("", 14, true, "#E2E8F0");
         status.setPadding(0, dp(12), 0, dp(4));
@@ -125,6 +133,18 @@ public class McpActivity extends Activity implements McpService.Listener {
             render();
         });
         full.setOnCheckedChangeListener((b, on) -> cfg.setFullControl(on));
+        aiNotif.setChecked(cfg.aiNotifications());
+        aiNotif.setOnCheckedChangeListener((b, on) -> {
+            cfg.setAiNotifications(on);
+            if (!on) SayDoNotificationListener.BUFFER.clear();
+        });
+        notifAccess.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+            } catch (Throwable t) {
+                toast("Sozlamalarni ochib bo'lmadi");
+            }
+        });
 
         copyCmd.setOnClickListener(v -> copy("SayDo MCP", cfg.claudeCodeCommand(), "Buyruq nusxalandi"));
         copyUrl.setOnClickListener(v -> copy("SayDo MCP", cfg.mcpUrlWithToken(), "URL nusxalandi"));
@@ -227,6 +247,9 @@ public class McpActivity extends Activity implements McpService.Listener {
         StringBuilder h = new StringBuilder();
         if (cfg.enabled() && GestureService.instance == null) {
             h.append("Accessibility o'chiq: AI ekranni boshqara olmaydi. Asosiy ekranda START bosing.\n");
+        }
+        if (cfg.aiNotifications() && !SayDoNotificationListener.accessGranted(this)) {
+            h.append("Bildirishnomalarga ruxsat berilmagan: pastdagi \"access\" tugmasi orqali yoqing.\n");
         }
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         boolean batteryOk = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());

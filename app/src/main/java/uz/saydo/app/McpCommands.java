@@ -154,6 +154,7 @@ final class McpCommands {
             case "device_status": text(content, status().toString(2)); return;
             case "list_macros": text(content, listMacros()); return;
             case "run_macro": text(content, runMacro(a.optString("macro", ""))); return;
+            case "read_notifications": text(content, readNotifications(a)); return;
             default: break;
         }
         if (!cfg.fullControl()) {
@@ -329,6 +330,27 @@ final class McpCommands {
         int f = s == null ? -1 : s.lastRunFirstFail();
         throw new Fail("Macro \"" + m.trigger + "\" stopped" + (f >= 0 ? " at step " + (f + 1) : "")
                 + ". Use read_screen to see where the phone is.");
+    }
+
+    // ------------------------------------------------------------------ notifications
+
+    /** Needs the owner's setting and Android's Notification access. Content is never logged. */
+    private String readNotifications(JSONObject a) throws Exception {
+        if (!cfg.aiNotifications()) {
+            throw new Fail("off: the owner must switch on 'AI bildirishnomalarni o'qiy olsin' in SayDo > MCP");
+        }
+        if (!SayDoNotificationListener.accessGranted(ctx)) {
+            throw new Fail("no Notification access: on the phone open Settings > Notifications > Device & app "
+                    + "notifications (Notification access) > SayDo > allow, or SayDo > MCP > access");
+        }
+        if (SayDoNotificationListener.instance == null) {
+            throw new Fail("notification listener not connected yet; try again in a few seconds");
+        }
+        List<String> lines = NotifBuffer.query(SayDoNotificationListener.current(ctx),
+                a.optInt("limit", NotifBuffer.DEFAULT_LIMIT), a.optString("app", ""),
+                a.optInt("since_minutes", 0), System.currentTimeMillis(), java.util.TimeZone.getDefault());
+        if (lines.isEmpty()) return "none";
+        return android.text.TextUtils.join("\n", lines);
     }
 
     // ------------------------------------------------------------------ screen
