@@ -81,6 +81,11 @@ public class GestureService extends AccessibilityService {
     private long runId = 0;
     private long runStartedAt = 0;
     private int firstFail = -1;
+
+    /** 0-based step where the last run first failed, or -1. Used by MCP run_macro. */
+    int lastRunFirstFail() {
+        return firstFail;
+    }
     private int runFailures = 0;
     private String currentMacroName = "Macro";
 
@@ -91,6 +96,7 @@ public class GestureService extends AccessibilityService {
         hud = new ExecutionHudOverlay(this);
         hud.setAbortCallback(this::cancel);
         FloatService.rebuild(getApplicationContext());
+        McpService.startIfEnabled(getApplicationContext());
         Log.i(TAG, "GestureService connected");
     }
 
@@ -487,7 +493,7 @@ public class GestureService extends AccessibilityService {
      * typing on the keyboard or pulling the shade still counts as "the same app".
      * Used identically for recording and playback so the two always agree.
      */
-    private String foregroundAppPkg() {
+    String foregroundAppPkg() {
         Set<String> ignored = ignoredCached();
         AccessibilityNodeInfo root = null;
         try {
@@ -565,6 +571,25 @@ public class GestureService extends AccessibilityService {
         }
     }
 
+    /** Dispatch one stroke for MCP (tap / hold / swipe). Callback runs on the main thread. */
+    boolean dispatchStroke(Path path, long durationMs, final java.util.function.Consumer<Boolean> done) {
+        try {
+            long dur = Math.max(1, Math.min(durationMs, GestureDescription.getMaxGestureDuration()));
+            GestureDescription gd = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, dur))
+                    .build();
+            boolean ok = dispatchGesture(gd, new GestureResultCallback() {
+                @Override public void onCompleted(GestureDescription d) { done.accept(true); }
+                @Override public void onCancelled(GestureDescription d) { done.accept(false); }
+            }, null);
+            if (!ok) done.accept(false);
+            return ok;
+        } catch (Throwable t) {
+            done.accept(false);
+            return false;
+        }
+    }
+
     private void recordFail(int stepIndex, String reason) {
         if (firstFail < 0) firstFail = stepIndex;
         runFailures++;
@@ -635,7 +660,7 @@ public class GestureService extends AccessibilityService {
         return v;
     }
 
-    private int[] screenSize() {
+    int[] screenSize() {
         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         if (Build.VERSION.SDK_INT >= 30) {
             try {
