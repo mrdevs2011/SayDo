@@ -110,6 +110,7 @@ final class SemPlayer {
         boolean busy;
         long sigBefore;
         boolean started;
+        int noBox;
     }
 
     private void pollNode(final GestureService.G g, final GestureService.G prev, final BooleanSupplier alive,
@@ -152,7 +153,8 @@ final class SemPlayer {
         }
         AccessibilityNodeInfo box = findScrollable(g.pkg, g.anchor);
         if (box == null) {
-            ss.tries = MAX_SCROLL_TRIES; // nothing scrolls on this screen: keep polling only
+            // No scrollable view right now (a fling or a transition may hide it): look again before giving up.
+            if (++ss.noBox > 25) ss.tries = MAX_SCROLL_TRIES;
             h.postDelayed(() -> pollNode(g, prev, alive, cb, index, t0, ss), POLL_MS);
             return;
         }
