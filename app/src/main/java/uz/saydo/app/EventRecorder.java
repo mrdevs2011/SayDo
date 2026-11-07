@@ -45,6 +45,7 @@ final class EventRecorder {
     private boolean active;
     private int sw = 1080, sh = 2340;
 
+    private boolean leftLauncher = false;
     private String curCls = "";
     private String curPkg = "";
     private String lastType = "";
@@ -75,6 +76,7 @@ final class EventRecorder {
         dropped = 0;
         curCls = "";
         curPkg = "";
+        leftLauncher = false;
         int[] size = svc.screenSize();
         sw = size[0];
         sh = size[1];
@@ -128,6 +130,9 @@ final class EventRecorder {
             curPkg = pkg;
             curCls = cls;
             boolean recents = launcher && cls.toLowerCase().contains("recent");
+            // Home/recents only mean something when we come from an app (the recording starts on the launcher).
+            if (launcher && !leftLauncher) { curPkg = pkg; curCls = cls; return; }
+            leftLauncher = !launcher;
             // Settings uses one class for every sub page, so the window title is part of the identity.
             StringBuilder title = new StringBuilder();
             List<CharSequence> tparts = e.getText();
@@ -164,30 +169,64 @@ final class EventRecorder {
     private void onClick(AccessibilityEvent e, String pkg, long now, String type) {
         flushScroll(now);
         AccessibilityNodeInfo src = e.getSource();
-        if (src == null) {
+        // The event itself carries the labels of the clicked view; the node may already be gone when a
+        // click opens a new screen, so the event text is the fallback.
+        String evLabel = firstEventLabel(e);
+        NodeAnchor anchor = null;
+        double x = 0.5, y = 0.5;
+        try {
+            if (src != null) {
+                anchor = SmartGestureDispatcher.extractAnchor(src, true);
+                Rect b = new Rect();
+                src.getBoundsInScreen(b);
+                if (b.width() > 0 && b.height() > 0) {
+                    x = clamp01(b.centerX() / (double) sw);
+                    y = clamp01(b.centerY() / (double) sh);
+                }
+            }
+        } finally {
+            if (src != null) recycleQuietly(src);
+        }
+        if ((anchor == null || !anchor.canBeMatched()) && !evLabel.isEmpty()) {
+            CharSequence cc = e.getClassName();
+            anchor = new NodeAnchor(anchor != null ? anchor.getViewIdResourceName() : "",
+                    anchor != null && !anchor.getClassName().isEmpty() ? anchor.getClassName()
+                            : (cc != null ? cc.toString() : ""),
+                    anchor != null ? anchor.getText() : "", anchor != null ? anchor.getContentDescription() : "",
+                    anchor != null ? anchor.getLeft() : 0, anchor != null ? anchor.getTop() : 0,
+                    anchor != null ? anchor.getRight() : 0, anchor != null ? anchor.getBottom() : 0,
+                    true, false, false, anchor != null ? anchor.getAncestryHash() : 0, evLabel);
+        }
+        if (anchor == null) {
             dropped++;
-            DebugLog.w("Rec", "click without source node (not recorded)");
+            DebugLog.w("Rec", "click without source node or label (not recorded)");
             return;
         }
+        long st = Math.max(0, now - t0);
+        nav.onClick(now);
+        add(Gesture.createSemantic(type, x, y, st, st + (Gesture.TYPE_HOLD.equals(type) ? 400 : 20),
+                anchor, "", pkg, curCls, 0, 0));
+        lastType = type;
+        lastFieldKey = "";
+        DebugLog.i("Rec", "step #" + steps.size() + " " + type + " pkg=" + pkg
+                + " id=" + !anchor.getViewIdResourceName().isEmpty()
+                + " label=" + (!anchor.getText().isEmpty() || !anchor.getContentDescription().isEmpty()
+                || !anchor.getChildText().isEmpty()) + " matchable=" + anchor.canBeMatched());
+    }
+
+    private static String firstEventLabel(AccessibilityEvent e) {
         try {
-            NodeAnchor anchor = SmartGestureDispatcher.extractAnchor(src, true);
-            Rect b = new Rect();
-            src.getBoundsInScreen(b);
-            double x = clamp01(b.centerX() / (double) sw);
-            double y = clamp01(b.centerY() / (double) sh);
-            long st = Math.max(0, now - t0);
-            nav.onClick(now);
-            add(Gesture.createSemantic(type, x, y, st, st + (Gesture.TYPE_HOLD.equals(type) ? 400 : 20),
-                    anchor, "", pkg, curCls, 0, 0));
-            lastType = type;
-            lastFieldKey = "";
-            DebugLog.i("Rec", "step #" + steps.size() + " " + type + " pkg=" + pkg
-                    + " id=" + !anchor.getViewIdResourceName().isEmpty()
-                    + " label=" + (!anchor.getText().isEmpty() || !anchor.getContentDescription().isEmpty()
-                    || !anchor.getChildText().isEmpty()) + " matchable=" + anchor.canBeMatched());
-        } finally {
-            recycleQuietly(src);
+            List<CharSequence> parts = e.getText();
+            if (parts != null) {
+                for (CharSequence c : parts) {
+                    if (c != null && c.toString().trim().length() > 0) return c.toString().trim();
+                }
+            }
+            CharSequence d = e.getContentDescription();
+            if (d != null && d.toString().trim().length() > 0) return d.toString().trim();
+        } catch (Throwable ignoredErr) {
         }
+        return "";
     }
 
     // ---------------------------------------------------------------- text
