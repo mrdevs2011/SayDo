@@ -64,6 +64,42 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 11. The on-screen "stopped on a wrong screen" message was never captured.
 
 
+
+## Record and replay, event-based (2.16.0): measured on a Galaxy A12 (SM-A127F, Android 13)
+
+Recording no longer needs the touch-swallowing overlay by default. It listens to accessibility events (click, long click, text change, scroll, window change) and stores steps that name the view (id, text, description or the label of its first child); typed text is stored as text and replayed with `ACTION_SET_TEXT`; scrolls store the amount and are skipped when the next target is already visible; the target is searched by scrolling the list when it is not visible; back/home are recorded from window changes (an edge swipe produces no click, only a window change). The old overlay is still there as the "Raw touches" box in the trigger panel. Old macros replay as before (new fields are optional).
+
+All counts are "runs that ended on the expected screen with the replay reporting success", 10 runs each, one run at a time, test apps only (Settings, Clock; the A12 has no Samsung Calculator). Macros were recorded on the phone with a script that checked each screen with `uiautomator dump` in a dry run first; the recording run itself used no dumps (a dump unbinds the accessibility service for a few seconds and loses events).
+
+| Scenario (A12) | Result | Build / note |
+|---|---|---|
+| a. 5 taps in Settings | 10 of 10 | `603f455` |
+| b. 11 taps in Settings, several pages | 10 of 10 | `0ce5f9d` |
+| c. Clock, 9 tab taps | 10 of 10 | `603f455` |
+| d1. Settings search, `input text wifi` as a text step, tap first result | 9 of 10, then 10 of 10 | `0ce5f9d`, then `737e42d`. The failure: results did not appear within 8 s on a cold start; the wait is now 15 s |
+| d2. same, typed by tapping the Samsung Keyboard keys | 9 of 10, then 10 of 10 | same builds. Typing is stored as text, the key taps are not replayed |
+| e. scroll twice, tap an item visible only after scrolling | 0 of 10, then 9 of 10 | `0ce5f9d` (first step ran before the list existed and was skipped; fixed), then `737e42d`. The one failure: after the second scroll the target was not found and the scroll search gave up too early (fixed in `9301213` and `79b3d89`, not re-measured) |
+| f. back from the left and right edge, home from the bottom | 10 of 10 | `0ce5f9d`. Recorded as global back/home steps from window changes |
+| g. popup menu opened and dismissed, a second popup, back | 10 of 10 | `0ce5f9d`. The macro replays to the same end screen but did not record the click on the popup menu item (that view sends no click event), so it is not an exact copy of what was done |
+| h. 20-step mix (taps, edge back, 2 scrolls, search with typed text, home) | 8 of 10 on `0ce5f9d`; 0 of 4 on `737e42d` (stopped) | Failures seen: search results not showing after the text was set; an "up" button press ignored while the page was opening; a scroll that did not move the list. Fixes in `79b3d89` (retype the text, retry an ignored up button, keep looking for the list) are pushed but were **not measured on the phone**, because `gh` lost its token and the new APK could not be downloaded |
+
+Recording slowness (A12, 8 taps and 16 swipes in 60 s on the Settings app; tap to the next screen resumed, from the shell clock to `wm_set_resumed_activity`, includes about 100 ms of `input` start-up that is the same in every mode):
+
+| Mode | Tap to activity resumed | SayDo CPU over 60 s (1 tick = 10 ms) |
+|---|---|---|
+| Not recording, listening off | mean 111 ms (8 samples) | 4 ticks |
+| Not recording, listening on | mean 115 ms (8 samples) | 95 ticks |
+| Recording from events (new default), listening on | mean 115 ms (8 samples) | 49 ticks |
+| Recording raw (old overlay), listening on | mean 239 ms (4 samples; 4 of 8 taps showed no screen change within 2.2 s) | 188 ticks |
+
+So the overlay adds about 125 ms to every tap and does the most work; event recording is not measurably slower than not recording. CPU is noisy because the voice recognizer runs when listening is on (95 versus 49 ticks with the same listening state shows the noise level). I did not measure how soon a list starts moving under a finger; by construction (the raw overlay re-injects a swipe after the finger is up) it moves late in raw mode and at once in event mode.
+
+Not measured: the old S22+ baseline numbers below (S22+, build 2.13.0, Settings/Calculator/Clock) are from the previous session and were stopped partway: a 10 of 10, b 9 of 10, c 9 of 10, d1 0 of 10, d2 5 of 10, e 3 of 10, f not valid, g and h not measured. The A12 numbers above are for the new code only; the old code was not run on the A12.
+
+What event recording cannot capture (Android sends no event for it): taps on views that are not accessible (games, canvas, some web views, some popup menus), Enter/Search on the on-screen keyboard (type the text and tap the result instead), the Samsung Edge panel (its handle is a system window; opening it is not recorded and its items are not replayed), secure windows and other users' windows (Android blocks both for every accessibility service). A new macro that needs these: record it with "Raw touches". Android 16 `AccessibilityService` motion events only cover mouse/stylus sources, not the touch screen, so there is no way to read touch coordinates without an overlay.
+
+Found on the way: Settings declares a HOME activity, so it counted as "the launcher"; a replay that starts inside an app never opened the app (fixed: the default home app only, and the first app is opened). A `uiautomator dump` unbinds the accessibility service (new: a running recording re-subscribes on reconnect).
+
 ## Record and replay: how it worked before 2.15.0, and where it failed
 
 Read from the code, then checked on the phone (counts in the next section).
