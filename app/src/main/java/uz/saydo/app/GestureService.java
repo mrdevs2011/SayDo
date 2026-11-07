@@ -111,6 +111,10 @@ public class GestureService extends AccessibilityService {
         hud.setAbortCallback(this::cancel);
         FloatService.rebuild(getApplicationContext());
         McpService.startIfEnabled(getApplicationContext());
+        // A reconnect (another accessibility client such as uiautomator, or a system rebind) resets the
+        // event types; a recording that is still running must keep receiving clicks.
+        EventRecorder rec = recorder;
+        if (rec != null && rec.isActive()) setRecordingEvents(true);
         Log.i(TAG, "GestureService connected");
     }
 
