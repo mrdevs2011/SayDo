@@ -47,7 +47,8 @@ final class McpApproval {
         }
         final CountDownLatch latch = new CountDownLatch(1);
         final AtomicBoolean allowed = new AtomicBoolean(false);
-        final String action = ACTION + "." + id;
+        // Unguessable name: on Android 12 and older the receiver is not private, so no other app may be able to answer for the owner.
+        final String action = ACTION + "." + id + "." + McpConfig.random(12);
         BroadcastReceiver rx = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
                 allowed.set(i.getBooleanExtra("allow", false));

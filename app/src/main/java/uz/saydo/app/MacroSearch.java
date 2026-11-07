@@ -111,6 +111,47 @@ final class MacroSearch {
         concept("wifi", "vayfay");
         concept("news", "yangilik", "yangiliklar", "novosti");
         concept("weather", "ob", "havo", "pogoda");
+        // More everyday words in the three languages (folded forms: Cyrillic as Latin, no apostrophes).
+        concept("alarm", "alarms", "budilnik", "budilniki", "signal", "uygotgich", "uygotuvchi", "soatsignal");
+        concept("timer", "taymer", "timers");
+        concept("volume", "ovoz", "ovozni", "ovozini", "gromkost", "gromkosti", "zvuk", "zvuka", "sound", "loud",
+                "balandroq", "gromche", "tishe", "pastroq", "quieter", "louder");
+        concept("mute", "silent", "ovozsiz", "bezzvuka", "tiho", "vibratsiya", "vibro");
+        concept("flashlight", "torch", "chiroq", "fonar", "fonarik", "fonarik", "flashka");
+        concept("brightness", "yorugliq", "yorugligi", "yarkost", "yarkosti", "bright", "dim");
+        concept("bluetooth", "blyutuz", "blutuz", "bluetuz", "blyutus");
+        concept("battery", "batareya", "batareyka", "quvvat", "zaryad", "zaryadka", "charge", "charging");
+        concept("internet", "tarmoq", "internetga");
+        concept("calculator", "kalkulyator", "kalkulator", "calc", "hisoblagich");
+        concept("clock", "soat", "chasi", "chasy", "vaqt", "vremya", "time");
+        concept("contacts", "contact", "kontakt", "kontaktlar", "kontakti", "rehbar", "telefonkitob", "telefonnaya");
+        concept("mail", "email", "gmail", "pochta", "pochtasi", "xat", "xatlar", "pisma", "pismo", "letters");
+        concept("maps", "map", "xarita", "xaritalar", "navigation", "navigator", "yonalish",
+                "marshrut", "route", "directions");
+        concept("taxi", "taksi", "yandextaxi", "uber", "ride", "yollash");
+        concept("order", "orders", "buyurtma", "buyurtmalar", "zakaz", "zakazi", "zakazat");
+        concept("food", "ovqat", "ovqatlar", "eda", "edu", "yemek", "meal", "dinner", "lunch", "tushlik");
+        concept("shop", "store", "dokon", "dokonlar", "magazin", "magazini", "bozor", "market", "shopping");
+        concept("notes", "note", "eslatma", "eslatmalar", "zametka", "zametki", "zametku", "memo");
+        concept("calendar", "kalendar", "taqvim", "kalendarya", "kalendari", "events", "tadbir");
+        concept("download", "downloads", "yuklab", "yuklash", "yuklanma", "yuklamalar", "skachat", "skachai",
+                "zagruzki", "zagruzka");
+        concept("profile", "profil", "profili", "akkaunt", "account", "hisobim");
+        concept("login", "signin", "kirish", "kir", "vhod", "voyti", "voydi", "avtorizatsiya");
+        concept("logout", "signout", "chiqish", "chiq", "vihod", "viyti", "viydi");
+        concept("next", "keyingi", "keyingisi", "sleduyushiy", "dalshe", "skip", "otkazib");
+        concept("stop", "toxtat", "toxtatish", "ostanovi", "ostanovit", "stoy", "halt");
+        concept("pause", "pauza", "pauzaga", "pausa");
+        concept("notifications", "notification", "xabarnoma", "xabarnomalar", "uvedomleniya", "uvedomlenie",
+                "bildirishnoma", "bildirishnomalar", "alerts");
+        concept("share", "ulashish", "ulash", "podelitsya", "podelis", "forward");
+        concept("save", "saqlash", "saqla", "sohrani", "sohranit", "saved", "saqlanganlar");
+        concept("history", "tarix", "istoriya", "istoriyu", "recent", "recents", "songgi");
+        concept("subscribe", "obuna", "obunalar", "podpiska", "podpiski", "subscriptions", "subscribed");
+        concept("playlist", "pleylist", "playlists", "pleylistlar", "pleylisti");
+        concept("radio", "radiostantsiya", "fm");
+        concept("podcast", "podcasts", "podkast", "podkasti");
+        concept("book", "books", "kitob", "kitoblar", "kniga", "knigi", "audiokitob", "audiobook");
     }
 
     /** Endings of Uzbek and Russian words, longest first; removed only to find a known concept. */
@@ -123,7 +164,9 @@ final class MacroSearch {
         if (c != null) return c;
         for (String suf : SUFFIXES) {
             if (foldedWord.length() - suf.length() >= 4 && foldedWord.endsWith(suf)) {
-                c = CONCEPT.get(foldedWord.substring(0, foldedWord.length() - suf.length()));
+                String stem = foldedWord.substring(0, foldedWord.length() - suf.length());
+                c = CONCEPT.get(stem);
+                if (c == null) c = CONCEPT.get(stem + "a"); // "pochtani" -> "pochta"
                 if (c != null) return c;
             }
         }

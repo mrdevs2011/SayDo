@@ -64,7 +64,7 @@ public class McpService extends Service {
             else c.startService(i);
         } catch (Throwable t) {
             // Android may refuse a background start; it is retried when SayDo is opened.
-            Log.w(TAG, "start refused: " + t);
+            Log.w(TAG, "start refused: " + t.getClass().getSimpleName());
         }
     }
 
@@ -177,7 +177,7 @@ public class McpService extends Service {
                 if (stopRequested) break;
                 connected = false;
                 lastError = t instanceof RelayError ? t.getMessage() : "Internet yoki relay bilan aloqa yo'q";
-                Log.w(TAG, "loop error: " + t);
+                Log.w(TAG, "loop error: " + t.getClass().getSimpleName());
                 updateNotification();
                 changed();
                 try {
