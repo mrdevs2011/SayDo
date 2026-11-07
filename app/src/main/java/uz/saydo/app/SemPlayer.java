@@ -31,6 +31,17 @@ final class SemPlayer {
         void done(boolean ok, String why);
     }
 
+    /** Screen text for the log, only from the test apps; other apps may show personal text. */
+    static String lbl(String pkg, NodeAnchor a) {
+        if (a == null || pkg == null) return "";
+        boolean ok = pkg.startsWith("com.android.settings") || pkg.equals("com.sec.android.app.clockpackage")
+                || pkg.equals("com.sec.android.app.popupcalculator");
+        if (!ok) return "<hidden>";
+        String t = !a.getText().isEmpty() ? a.getText()
+                : !a.getContentDescription().isEmpty() ? a.getContentDescription() : a.getChildText();
+        return t.length() > 40 ? t.substring(0, 40) : t;
+    }
+
     static final long FIND_MS = 8000;
     static final long SEARCH_AFTER_MS = 1200;
     static final long POLL_MS = 150;
@@ -115,7 +126,7 @@ final class SemPlayer {
         long now = SystemClock.uptimeMillis();
         if (n != null) {
             DebugLog.i("Play", "step " + (index + 1) + " found after " + (now - t0) + " ms (scan " + (now - t1)
-                    + " ms) tries=" + ss.tries);
+                    + " ms) tries=" + ss.tries + " want='" + lbl(g.pkg, g.anchor) + "'");
             act(g, n, alive, cb, index);
             return;
         }
