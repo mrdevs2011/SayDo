@@ -242,12 +242,23 @@ public class GestureService extends AccessibilityService {
         return s;
     }
 
-    private Set<String> launcherPackages() {
+    /**
+     * The home app. Not every package that declares a HOME activity: Settings declares one too
+     * (FallbackHome), which made Settings count as "the launcher".
+     */
+    Set<String> launcherPackages() {
         Set<String> s = new HashSet<>();
         try {
             Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+            ResolveInfo def = getPackageManager().resolveActivity(home, 0);
+            if (def != null && def.activityInfo != null && !"android".equals(def.activityInfo.packageName)) {
+                s.add(def.activityInfo.packageName);
+                return s;
+            }
             for (ResolveInfo ri : getPackageManager().queryIntentActivities(home, 0)) {
-                if (ri.activityInfo != null) s.add(ri.activityInfo.packageName);
+                if (ri.activityInfo != null && !"com.android.settings".equals(ri.activityInfo.packageName)) {
+                    s.add(ri.activityInfo.packageName);
+                }
             }
         } catch (Throwable ignored) {
         }
