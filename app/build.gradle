@@ -10,8 +10,8 @@ android {
         applicationId 'uz.saydo.app'
         minSdk 26
         targetSdk 34
-        versionCode 28
-        versionName '2.15.0'
+        versionCode 29
+        versionName '2.16.0'
     }
 
     signingConfigs {
