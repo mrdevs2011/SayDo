@@ -225,15 +225,6 @@ public class GestureService extends AccessibilityService {
                 if (!ignoredPackages().contains(pkg)) lastPkg = pkg;
             }
         }
-        // Background resilience: revive VoiceService if master is active
-        if (SettingsRepository.getInstance(this).isMasterOn() && !VoiceService.running && Setup.missing(this) == Setup.OK) {
-            try {
-                Intent vi = new Intent(this, VoiceService.class);
-                if (Build.VERSION.SDK_INT >= 26) startForegroundService(vi);
-                else startService(vi);
-            } catch (Throwable ignored) {
-            }
-        }
     }
 
     // ---------------------------------------------------------------- Home Navigation

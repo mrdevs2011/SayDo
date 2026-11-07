@@ -27,29 +27,22 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Random;
-import java.util.Set;
 
 import uz.saydo.app.data.Macro;
 import uz.saydo.app.data.MacroRepository;
 import uz.saydo.app.metrics.Metrics;
-import uz.saydo.app.metrics.VoiceBench;
 
 /**
  * Roadmap Stage 1: measure real-device reliability.
  *
- * - Voice test: prompts each trigger in shuffled rounds; macros are NOT run, matches are scored.
  * - Macro test: runs one macro N times; after each run the human confirms whether it really
  *   reached the right end state (the app's own "OK" is not trusted).
  * - Report: summary of everything recorded in metrics.jsonl.
  */
-public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
+public class BenchmarkActivity extends Activity {
 
-    private static final long PROMPT_TIMEOUT_MS = 7000;
-    private static final long BETWEEN_PROMPTS_MS = 2000;
 
     // Macro test state is static so it survives the activity going to the background
     // while the macro runs in other apps.
@@ -64,11 +57,6 @@ public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
     private final Handler h = new Handler(Looper.getMainLooper());
     private float d;
 
-    // Voice UI
-    private EditText roundsInput;
-    private TextView promptView, voiceStatus;
-    private Button voiceStart;
-
     // Macro UI
     private Spinner macroSpinner;
     private EditText runsInput, viewSecInput, brokeStepInput;
@@ -79,13 +67,6 @@ public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
 
     // Report UI
     private TextView reportView;
-
-    private final Runnable promptTimeout = () -> {
-        VoiceBench b = VoiceBench.active();
-        if (b != null) b.onTimeout(); // -> onTrial()
-    };
-
-    private final Runnable nextPrompt = this::nextPrompt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -101,10 +82,9 @@ public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
         scroll.addView(root);
 
         root.addView(text("SayDo Benchmark", 20, true, "#FFFFFF"));
-        root.addView(text("Bosqich 1: real telefonda o'lchov. Natijalar metrics.jsonl ga yoziladi.",
+        root.addView(text("Real telefonda o'lchov. Natijalar metrics.jsonl ga yoziladi.",
                 12, false, "#94A3B8"));
 
-        buildVoiceSection(root);
         buildMacroSection(root);
         buildReportSection(root);
 
@@ -112,120 +92,12 @@ public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
         refreshReport();
     }
 
-    // ================================================================== Voice test
-
-    private void buildVoiceSection(LinearLayout root) {
-        root.addView(header("1. Ovoz testi"));
-        root.addView(text("Tinglash yoqilgan bo'lishi kerak (asosiy ekranda START). Test paytida makrolar "
-                + "ishga tushmaydi — faqat qaysi trigger tanilgani yoziladi. Ko'rsatilgan iborani bir marta, "
-                + "odatdagidek ayting.", 12, false, "#94A3B8"));
-
-        LinearLayout row = row();
-        row.addView(text("Raundlar:", 14, false, "#E2E8F0"));
-        roundsInput = number("5");
-        row.addView(roundsInput, weight());
-        root.addView(row);
-
-        voiceStart = button("Ovoz testini boshlash", "#22C55E");
-        voiceStart.setOnClickListener(v -> {
-            if (VoiceBench.active() != null) stopVoiceBench("To'xtatildi");
-            else startVoiceBench();
-        });
-        root.addView(voiceStart);
-
-        promptView = text("", 26, true, "#FACC15");
-        promptView.setGravity(Gravity.CENTER);
-        promptView.setPadding(0, dp(16), 0, dp(8));
-        root.addView(promptView);
-
-        voiceStatus = text("", 13, false, "#E2E8F0");
-        voiceStatus.setTypeface(Typeface.MONOSPACE);
-        root.addView(voiceStatus);
-    }
-
-    private void startVoiceBench() {
-        if (!VoiceService.running) {
-            toast("Avval asosiy ekranda START bilan tinglashni yoqing");
-            return;
-        }
-        Set<String> triggers = new LinkedHashSet<>();
-        for (Macro m : MacroRepository.getInstance(this).getAll()) {
-            if (m != null && !m.trigger.isEmpty()) triggers.add(m.trigger);
-        }
-        if (triggers.isEmpty()) {
-            toast("Hech qanday trigger yo'q");
-            return;
-        }
-        int rounds = clamp(parseInt(roundsInput, 5), 1, 50);
-        VoiceBench b = new VoiceBench(new ArrayList<>(triggers), rounds, new Random());
-        b.setListener(this);
-        VoiceBench.setActive(b);
-        voiceStatus.setText("");
-        voiceStart.setText("To'xtatish");
-        nextPrompt();
-    }
-
-    private void nextPrompt() {
-        VoiceBench b = VoiceBench.active();
-        if (b == null) return;
-        if (b.isDone()) {
-            stopVoiceBench("Tugadi");
-            return;
-        }
-        promptView.setText("Ayting:\n«" + b.current() + "»");
-        b.prompt(System.currentTimeMillis());
-        h.removeCallbacks(promptTimeout);
-        h.postDelayed(promptTimeout, PROMPT_TIMEOUT_MS);
-    }
-
-    @Override
-    public void onTrial(VoiceBench.Trial t) {
-        h.removeCallbacks(promptTimeout);
-        Metrics.benchVoice(t);
-        VoiceBench b = VoiceBench.active();
-        String n = b == null ? "" : b.position() + "/" + b.total() + " ";
-        String line;
-        switch (t.res) {
-            case HIT:
-                line = "✓ " + t.expected + (t.latencyMs >= 0 ? "  (" + t.latencyMs + " ms)" : "");
-                break;
-            case WRONG:
-                line = "✗ " + t.expected + "  → tanildi: " + t.got;
-                break;
-            default:
-                line = "— " + t.expected + "  eshitilmadi"
-                        + (t.got.isEmpty() ? "" : " (eshitildi: \"" + t.got + "\")");
-                break;
-        }
-        voiceStatus.append(n + line + "\n");
-        promptView.setText("…");
-        h.postDelayed(nextPrompt, BETWEEN_PROMPTS_MS);
-    }
-
-    private void stopVoiceBench(String why) {
-        VoiceBench b = VoiceBench.active();
-        VoiceBench.setActive(null);
-        h.removeCallbacks(promptTimeout);
-        h.removeCallbacks(nextPrompt);
-        voiceStart.setText("Ovoz testini boshlash");
-        if (b != null) {
-            int done = b.trials().size();
-            promptView.setText(why);
-            voiceStatus.append(String.format(Locale.US,
-                    "\n%s: %d sinov · to'g'ri %d · noto'g'ri %d · eshitilmadi %d\n",
-                    why, done, b.count(VoiceBench.Res.HIT), b.count(VoiceBench.Res.WRONG),
-                    b.count(VoiceBench.Res.MISS)));
-        }
-        refreshReport();
-    }
-
     // ================================================================== Macro test
 
     private void buildMacroSection(LinearLayout root) {
-        root.addView(header("2. Makro testi"));
+        root.addView(header("1. Makro testi"));
         root.addView(text("Makro N marta ishga tushadi. Har safar oxirida natijani ko'rib chiqing, so'ng "
-                + "SayDo qaytib ochiladi va siz \"to'g'ri bo'ldimi?\" deb javob berasiz. Test paytida "
-                + "ovozli tinglashni o'chirib qo'ying.", 12, false, "#94A3B8"));
+                + "SayDo qaytib ochiladi va siz \"to'g'ri bo'ldimi?\" deb javob berasiz.", 12, false, "#94A3B8"));
 
         macros = new ArrayList<>(MacroRepository.getInstance(this).getAll());
         List<String> names = new ArrayList<>();
@@ -383,7 +255,7 @@ public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
     // ================================================================== Report
 
     private void buildReportSection(LinearLayout root) {
-        root.addView(header("3. Hisobot"));
+        root.addView(header("2. Hisobot"));
         LinearLayout row = row();
         Button refresh = button("Yangilash", "#64748B");
         Button copy = button("Nusxa olish", "#22C55E");
@@ -438,9 +310,6 @@ public class BenchmarkActivity extends Activity implements VoiceBench.Listener {
     @Override
     protected void onDestroy() {
         h.removeCallbacksAndMessages(null);
-        if (isFinishing() && VoiceBench.active() != null) {
-            VoiceBench.setActive(null);
-        }
         super.onDestroy();
     }
 

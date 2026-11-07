@@ -8,17 +8,15 @@ public final class SetupPolicy {
     public static final int OK = 0;
     public static final int NEED_OVERLAY = 1;
     public static final int NEED_ACCESSIBILITY = 2;
-    public static final int NEED_MIC = 3;
     public static final int NEED_NOTIF = 4;
 
     private SetupPolicy() {}
 
     /** First required thing that is missing, or OK. */
-    public static int firstMissing(boolean overlay, boolean accessibility, boolean mic,
+    public static int firstMissing(boolean overlay, boolean accessibility,
                                    boolean notifNeeded, boolean notifGranted) {
         if (!overlay) return NEED_OVERLAY;
         if (!accessibility) return NEED_ACCESSIBILITY;
-        if (!mic) return NEED_MIC;
         if (notifNeeded && !notifGranted) return NEED_NOTIF;
         return OK;
     }

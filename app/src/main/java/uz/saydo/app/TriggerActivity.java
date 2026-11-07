@@ -15,7 +15,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Opens when floating Start is pressed: asks for the voice trigger phrase. */
+/** Opens when floating Start is pressed: asks for the macro name (MCP finds macros by it). */
 public class TriggerActivity extends Activity {
 
     @Override
@@ -54,7 +54,7 @@ public class TriggerActivity extends Activity {
         cardLp.gravity = Gravity.CENTER;
 
         TextView title = new TextView(this);
-        title.setText("Enter your voice trigger");
+        title.setText("Name this macro");
         title.setTextSize(18);
         title.setTextColor(Color.WHITE);
         title.setGravity(Gravity.CENTER);
@@ -62,7 +62,7 @@ public class TriggerActivity extends Activity {
         card.addView(title);
 
         final EditText input = new EditText(this);
-        input.setHint("e.g. open youtube");
+        input.setHint("e.g. open wifi settings");
         input.setHintTextColor(Color.parseColor("#A8C0E8"));
         input.setTextColor(Color.WHITE);
         input.setSingleLine(true);

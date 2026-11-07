@@ -36,10 +36,8 @@ public class MainActivity extends AppCompatActivity implements
         MacroRepository.OnMacrosChangedListener,
         SettingsRepository.Listener {
 
-    static final String EXTRA_ASK_MIC = "ask_mic";
     static final String EXTRA_ASK_NOTIF = "ask_notif";
 
-    private static final int REQ_AUDIO = 101;
     private static final int REQ_NOTIF = 102;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -53,10 +51,6 @@ public class MainActivity extends AppCompatActivity implements
     private View empty;
     private TextView hint, btnStart;
     private MacroAdapter adapter;
-
-    /** VoiceService state changes arrive on arbitrary threads; refresh the status text on the UI thread. */
-    private final VoiceService.StateListener voiceListener =
-            (state, text) -> ui.post(this::refreshUi);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -94,11 +88,6 @@ public class MainActivity extends AppCompatActivity implements
         }
         McpService.startIfEnabled(this);
 
-        View voiceGate = findViewById(R.id.btnVoiceGate);
-        if (voiceGate != null) {
-            voiceGate.setOnClickListener(v -> startActivity(new Intent(this, VoiceGateActivity.class)));
-        }
-
         View title = findViewById(R.id.titleSayDo);
         if (title != null) {
             title.setOnLongClickListener(v -> {
@@ -117,7 +106,6 @@ public class MainActivity extends AppCompatActivity implements
         MacroRepository.getInstance(this).addListener(this);
         SettingsRepository.getInstance(this).addListener(this);
 
-        VoiceService.addStateListener(voiceListener);
         updateMacroList(MacroRepository.getInstance(this).getAll());
         refreshUi();
         handleIntent(getIntent());
@@ -132,12 +120,6 @@ public class MainActivity extends AppCompatActivity implements
 
     private void handleIntent(Intent i) {
         if (i == null) return;
-        if (i.getBooleanExtra(EXTRA_ASK_MIC, false)) {
-            i.removeExtra(EXTRA_ASK_MIC);
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                requestMic();
-            }
-        }
         if (i.getBooleanExtra(EXTRA_ASK_NOTIF, false)) {
             i.removeExtra(EXTRA_ASK_NOTIF);
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -158,18 +140,16 @@ public class MainActivity extends AppCompatActivity implements
         if (Setup.missing(this) != Setup.OK) {
             SettingsRepository.getInstance(this).setMasterOn(false);
             FloatService.hide(this);
-            stopListening();
+            refreshUi();
             return;
         }
         FloatService.show(this);
-        if (!VoiceService.running) startListeningFlow();
         refreshUi();
     }
 
     @Override
     protected void onDestroy() {
         destroyed = true;
-        VoiceService.removeStateListener(voiceListener);
         MacroRepository.getInstance(this).removeListener(this);
         SettingsRepository.getInstance(this).removeListener(this);
         ui.removeCallbacksAndMessages(null);
@@ -208,20 +188,12 @@ public class MainActivity extends AppCompatActivity implements
     public void refreshUi() {
         if (destroyed) return;
         boolean enabled = SettingsRepository.getInstance(this).isMasterOn();
-        boolean listening = VoiceService.running;
         btnStart.setText(enabled ? "STOP" : "START");
         btnStart.setBackgroundResource(enabled ? R.drawable.bg_btn_stop : R.drawable.bg_btn_start);
 
-        String packMsg = VoiceService.voicePackMessage;
-        if (enabled && listening && packMsg != null) {
-            hint.setText("Listening · " + packMsg);
-            hint.setTextColor(ContextCompat.getColor(this, R.color.accent));
-        } else if (enabled && listening) {
-            hint.setText("Listening · say a trigger");
+        if (enabled) {
+            hint.setText("Floating button is on · tap it to record a macro");
             hint.setTextColor(ContextCompat.getColor(this, R.color.success));
-        } else if (enabled) {
-            hint.setText("Starting…");
-            hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         } else if (pendingStart) {
             hint.setText("Setting up permissions…");
             hint.setTextColor(ContextCompat.getColor(this, R.color.accent));
@@ -263,9 +235,6 @@ public class MainActivity extends AppCompatActivity implements
         }
         lastStep = step;
         switch (step) {
-            case Setup.NEED_MIC:
-                requestMic();
-                break;
             case Setup.NEED_NOTIF:
                 requestNotif();
                 break;
@@ -280,7 +249,7 @@ public class MainActivity extends AppCompatActivity implements
         if (destroyed || !Setup.shouldOfferBattery(this)) return;
         SettingsRepository.getInstance(this).setBatteryAsked(true);
         new androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("Keep voice listening alive?")
+                .setTitle("Keep SayDo alive in the background?")
                 .setMessage("Android may stop SayDo in the background to save battery. "
                         + "You can allow unrestricted background use. This is optional.")
                 .setNegativeButton("Not now", null)
@@ -292,7 +261,6 @@ public class MainActivity extends AppCompatActivity implements
         switch (step) {
             case Setup.NEED_OVERLAY: return "Display over other apps";
             case Setup.NEED_ACCESSIBILITY: return "Accessibility service";
-            case Setup.NEED_MIC: return "Microphone permission";
             case Setup.NEED_NOTIF: return "Notification permission";
             default: return "Setup";
         }
@@ -303,19 +271,13 @@ public class MainActivity extends AppCompatActivity implements
         SettingsRepository.getInstance(this).setMasterOn(on);
         if (on) {
             FloatService.show(this);
-            startListeningFlow();
         } else {
             FloatService.hide(this);
-            stopListening();
         }
         refreshUi();
     }
 
     // ------------------------------------------------------------------ Permissions & Audio
-
-    private void requestMic() {
-        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
-    }
 
     private void requestNotif() {
         if (Build.VERSION.SDK_INT >= 33) {
@@ -323,54 +285,12 @@ public class MainActivity extends AppCompatActivity implements
         }
     }
 
-    private void startListeningFlow() {
-        if (destroyed || !SettingsRepository.getInstance(this).isMasterOn()) return;
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestMic();
-            return;
-        }
-        if (Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestNotif();
-            return;
-        }
-        try {
-            Intent i = new Intent(this, VoiceService.class);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-            else startService(i);
-        } catch (Exception e) {
-            toast("Could not start listening");
-        }
-        refreshUi();
-    }
-
-    private void stopListening() {
-        try {
-            stopService(new Intent(this, VoiceService.class));
-        } catch (Exception ignored) {
-        }
-        VoiceService.running = false;
-        refreshUi();
-    }
-
     @Override
     public void onRequestPermissionsResult(int code, @NonNull String[] perms, @NonNull int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
         if (destroyed) return;
-        if (code == REQ_AUDIO) {
-            if (pendingStart) {
-                continueStart();
-            } else if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-                startListeningFlow();
-            } else {
-                toast("Microphone permission is required");
-            }
-        } else if (code == REQ_NOTIF) {
-            if (pendingStart) {
-                continueStart();
-            } else {
-                startListeningFlow();
-            }
+        if (code == REQ_NOTIF && pendingStart) {
+            continueStart();
         }
     }
 

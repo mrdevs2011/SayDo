@@ -10,11 +10,8 @@ Nothing here is a performance or reliability claim.
 - `GestureService` (AccessibilityService): dispatches taps, holds and swipes, and reads the screen for anchors and the
   current app. `SmartGestureDispatcher` and `NodeAnchor` (in `kernel/`) are used by it.
 - `Runner`: starts a macro (wake, go Home, then `GestureService`).
-- `VoiceService`: foreground service. Uses Android `SpeechRecognizer`, asks for the on-device engine first
-  (`EXTRA_PREFER_OFFLINE`); it may use the online engine when no offline pack is available. Matches the result with
-  `TriggerMatcher` (and `ParametricMatcher` / `MultilingualMatcher` from `kernel/voice`).
-- `McpService`, `McpRelay`, `McpCommands`: optional remote control through the `relay/` project. Off by default.
-- `audio/VoiceGate`: optional loudness gate. Off by default.
+- `McpService`, `McpRelay`, `McpCommands`: remote control through the `relay/` project (see `docs/MCP.md`). Off by default.
+- `TriggerMatcher`: normalizes macro names and scores fuzzy matches; used by MCP to find a macro by name.
 - `data/MacroRepository`: macros in `macros_v2.json`.
 - `metrics`, `BenchmarkActivity`: local measurements.
 
@@ -34,13 +31,6 @@ one into place. A missing or corrupt main file is restored from the `.bak`. Acce
   and smoothed (`GestureResampler`) and split into segments when longer than the system maximum gesture duration.
   A cancelled gesture is retried once; then replay stops.
 - Not done: checking the exact screen inside an app, `FLAG_SECURE` screens.
-
-## Voice
-
-`VoiceService` restarts a `SpeechRecognizer` session repeatedly; each error code has its own restart delay.
-The service does not request audio focus. The sessions are short and Google's speech service plays its own start and
-end sounds (open problem, see `docs/STATUS.md`). `TriggerMatcher` normalizes text and compares with edit distance
-and a phonetic key. Recognition quality has not been measured.
 
 ## Crash log
 

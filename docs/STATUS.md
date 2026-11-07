@@ -1,6 +1,6 @@
 # SayDo status
 
-Last updated: 2026-11-06. Version on `main`: 2.15.0 (versionCode 28). Newest verified-on-phone builds are listed per row.
+Last updated: 2026-11-07. Version on `main`: 2.16.0 (versionCode 29). Newest verified-on-phone builds are listed per row.
 
 Only what was observed on a real phone counts as working. Unit tests run on a JVM with Android
 stubbed, so they cannot prove on-device behaviour.
@@ -11,6 +11,7 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 
 | Feature | State | Evidence |
 |---|---|---|
+| Voice system removal (2.15.0 work, not yet versioned or committed) | **Compiles; NOT run on a phone** | Deleted `VoiceService`, `VoiceGateActivity`, `audio/*`, `VoiceBench`, `kernel/voice/*`, `ContextMemory` and their tests; removed RECORD_AUDIO, FOREGROUND_SERVICE_MICROPHONE and the speech `<queries>` entry; START now only turns the floating bubble on (needs overlay, accessibility, notifications); `device_status` no longer returns `voice_listening`. `javac` against android-36 passes (without `MainActivity`/`MacroAdapter`); `SetupPolicyTest` and `TriggerMatcherTest` pass locally; the other unit tests only compile here (need CI). Unverified on a phone: main screen, START/STOP, bubble, recording, tile, benchmark screen. Existing installs keep the microphone permission until uninstalled or revoked |
 | Install, launch, main screen | Works | Galaxy A12 and S22+ |
 | Start from launcher default page | Works | A12, S22+ |
 | One tap = one stroke | **Works** | S22+: 4/4 recordings stored exactly the taps sent, no stray strokes |
@@ -22,13 +23,10 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | Stops on a wrong screen | Works once | 1/1: expected `com.android.settings`, saw the launcher, no tap sent. The on-screen stop message was not captured |
 | Replay speed | **Improved, partly verified** | Was about 6 s per step for a 3 s recorded gap. Cause found for anchors with no id/text/description: they can never match but were waited on for 2.5 s. Fixed in `97f800d`. S22+: a 2-swipe macro (both anchors unusable) replayed with 0-2 ms wait and 2.9 s between steps (recorded 2.5 s + dispatch). Anchors that can match were not retested; `Play:` logs now show scan and resolve times |
 | Other apps, slow screens, long idle gaps | **Not tested** | |
-| Voice, ERROR_CLIENT loop | **Fixed** (another session, own evidence) | Cause: SayDo's own audio-focus request was taken away each time the recognizer started, which cancelled the session. In a 60 s silent window: 40 CLIENT errors and 40 starts before, 0 CLIENT errors and 9 starts after (`13d19b0`) |
-| Voice triggers, recognition quality | **Not tested** | No spoken trigger has been measured |
-| First START | **Changed** (`58286b2`) | Asks only for overlay, accessibility, microphone, notifications. Battery exemption is a one-time optional prompt; speech pack status is shown in the app |
-| Status text on main screen | **Changed** (`e0964b2`) | Follows VoiceService state; no longer stuck on "Starting" |
+| First START | **Changed** (`58286b2`) | Asked for overlay, accessibility, microphone, notifications; the microphone step is gone with the voice removal (row above). Battery exemption is a one-time optional prompt |
+| Status text on main screen | **Changed** (`e0964b2`) | Was tied to VoiceService; now shows only whether the floating button is on (see the removal row) |
 | Delete | **Changed** (`184a532`) | Confirmation dialog instead of tap-twice |
 | Pause before a step with a known app | **Capped at 3 s** (`a46f7a4`) | An 8.14 s recorded pause replayed as 3 s; logged when capped |
-| Voice gate | **Not tested** | Off by default |
 | MCP relay | Deployed (older code, no rate limits), E2E test passes locally | Also tested against the live relay with the real phone, see next row |
 | MCP on the phone | **Works against the live relay** (S22+, build 2.12.0) | tools/list = 14 tools; device_status, list_macros, press home/back, open_app, read_screen (20-34 numbered elements, counts only), tap, run_macro of a 2-step macro (completed, 6.5 s incl. one 3 s capped pause) all returned ok. Errors: unknown macro and tap outside the screen return isError with a clear text; negative coordinate is rejected by schema; 2 wrong tokens got 401. Timings (single samples, via relay from this PC): tap 0.5-1.5 s, read_screen 1.1-2.9 s, run_macro 6.5 s. First "connected" in the app appeared about 26 s after switching on (first long poll). Not tested: screenshot, list_apps, type_text, click_element, swipe, long_press (privacy rules) |
 | MCP token rotation with MCP off | **Bug found, fixed (`a49d4b2`) and verified on the phone** | Before the fix: old token still HTTP 200 after rotation with MCP off. After (build of `805bc06`): token A 200; rotated with MCP on: A 401; B 200; MCP off and rotated: B 401, log `token rotated while off, register HTTP 200`; MCP service gone. Old note: | On the phone, rotating the token with MCP off left the OLD token valid on the relay (a tools/list with the old token returned 200). Reason: the new hash is only registered when MCP starts. Fix registers the new hash right after rotation |
@@ -37,7 +35,6 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | Pause cap in Calculator | **Works** | 8.139 s recorded pause replayed as 3000 ms (log: `pause capped 8139 -> 3000`) |
 | 9+ macros on the main screen | **Works** | 14 rows: list bottom y=2036, START top y=2059; last row's play button [714,1805][849,1940] fully visible; tapping it ran that macro (dispatch y=0.0949 = m9) and listening stayed on |
 | MacroStudio, Debug, Benchmark screens | **Open without crash** | `logcat -b crash` empty. Garbled bullet in MacroStudio subtitle fixed (`0b6507a`) |
-| Voice gate screen | **Opens and closes, no crash** (2 times) | Meter level for silence NOT verified: `uiautomator dump` fails there ("could not get idle state", the screen animates) and screenshots are not allowed. Gate and calibration untested |
 | App icon | **APK is correct; phone still unconfirmed** | CI APK has the adaptive icon (navy background, white Say, green Do, monochrome layer); no legacy or override resources; installed APK was byte-identical to it. `am force-stop` of the launcher done; shell may not disable/enable SayDo's component (SecurityException). Cause is most likely the One UI Home icon cache. Human: look at the icon; if old, Settings > Apps > One UI Home > Storage > Clear cache (cache only), or restart the phone; also check no icon pack/theme is applied |
 | MCP compact tools (2.14.0) | **Built and unit/relay tested; NOT deployed, NOT run through MCP on a phone** | Compact `read_screen` (query, bounds, max_elements), `act` (15 steps in one call), `read_notifications` (opt-in setting + Notification access), `canTakeScreenshot` in the accessibility config, bubble untouchable during commands, screenshot defaults 540/q50. JVM unit tests (format, act parser, notification buffer) and relay e2e test (schemas, act and read_notifications with a simulated phone). Live relay still has the old tools, so none of the new tools were called on a phone. Unverified: act timing and retries on real screens, Telegram flows, whether the bubble stopped swallowing taps, whether the screenshot SecurityException is gone, anything needing Notification access (the owner grants it). See `docs/MCP.md` |
 | MCP macro first (2.15.0) | **Built; JVM and relay tests pass; NOT deployed; NOTHING tested on a phone** | New tools `find_macro`, `describe_macro`, `set_macro_info`, `scroll_to`; `list_macros` (paged, compact) and `run_macro` (confirm, params) changed. New macro fields `description` and `sensitiveReviewed` (old JSON loads unchanged), description generated at the end of a recording, Info dialog in MacroStudio, ranking over trigger/aliases/description/apps/anchors in Uzbek, Russian, English, money-app detection, sensitive macros need `confirm=true` plus an Allow notification on the phone (switchable), screen tools refused in money apps (switchable, default off). Evidence: JVM unit tests (ranking, descriptions, guard decisions, JSON compatibility), relay e2e with a simulated phone, CI build. **Unverified:** the approval notification (channel, heads-up, Allow/Deny, 60 s timeout, notification permission), the Info dialog, the description generated from a real recording (app labels, anchor texts), ranking quality on the owner's real macros, `scroll_to`, the money-app refusals on a real banking app, `run_macro` result text, whether `params` can ever apply (recorder makes no slots), the live relay (still the old tools). See `docs/MCP.md` |
@@ -81,21 +78,17 @@ Not fixed, for the owner to decide:
 - START button covering the list (`97f800d`): list bottom y=2036, button top y=2059 on the S22+. Not re-tested with 8+ macros.
 - Anchors that can never match cost 2.5 s per step (`97f800d`): fixed; a 2-swipe macro replayed with 2.9 s between steps.
 - One tap = one stroke, saving, short Settings-only replay: see the table.
-- Voice `ERROR_CLIENT` loop, stale "Starting" status, confusing first START, tap-twice delete, long pauses: see the table.
+- Confusing first START, tap-twice delete, long pauses: see the table.
 
 ## Still open
 
-1. **Beeps.** Measured source: `com.google.android.tts` (Speech Services by Google, `GoogleTTSRecognitionService`, uid 10283) plays two short `AudioTrack` tones per recognition session, usage `USAGE_NOTIFICATION_EVENT` (content type MUSIC), each about 0.2-0.4 s, one at the start and one at the end. 9 sessions in 45 s, one every 5.1 s. Listening with zero saved macros starts no recognizer and therefore makes no beeps. Not fixed. Options: see the final report of the session.
-2. **Top-edge swipe is not recorded.** The status-bar region belongs to SystemUI; probably not fixable from the overlay.
-3. **Voice recognition quality** is unmeasured.
-4. **Voice gate** is untested (off by default).
-5. **Replay in the owner's own apps, slow screens, long idle gaps** are untested (Calculator and Clock pass).
-6. **MCP on the phone** is untested (off by default). The relay has an end-to-end test with a simulated phone only. Hardening in git (rate limits, Origin check, caps) is **not deployed**; owner decisions are in the relay review notes of the final report.
-7. **Replay always presses Home first** (`Runner`), so a macro must begin with a tap on the app icon on the launcher. A macro recorded inside an app only works if the app is opened within the first ~8 s (tested by launching it with adb after the replay started). Opening the app by adb *before* pressing play does not help. Decide whether macros should start from the current screen.
-8. **Uzbek triggers** are not supported or tested.
-9. Slow replay for anchors that *can* match: not measured.
-10. Accessibility via ADB right after install sometimes does not stick; setting it again works.
-11. The on-screen "stopped on a wrong screen" message was never captured.
+1. **Top-edge swipe is not recorded.** The status-bar region belongs to SystemUI; probably not fixable from the overlay.
+2. **Replay in the owner's own apps, slow screens, long idle gaps** are untested (Calculator and Clock pass).
+3. **MCP on the phone** is untested (off by default). The relay has an end-to-end test with a simulated phone only. Hardening in git (rate limits, Origin check, caps) is **not deployed**; owner decisions are in the relay review notes of the final report.
+4. **Replay always presses Home first** (`Runner`), so a macro must begin with a tap on the app icon on the launcher. A macro recorded inside an app only works if the app is opened within the first ~8 s (tested by launching it with adb after the replay started). Opening the app by adb *before* pressing play does not help. Decide whether macros should start from the current screen.
+5. Slow replay for anchors that *can* match: not measured.
+6. Accessibility via ADB right after install sometimes does not stick; setting it again works.
+7. The on-screen "stopped on a wrong screen" message was never captured.
 
 
 
@@ -160,4 +153,4 @@ Removed unused code under `kernel/` (daemon, mesh, Vulkan pipeline, chaos engine
 - The "85-95% for short macros" figure was a guess, and too optimistic.
 - The "0 failures" claim in the old Omega certificate was false (6 tests were failing). The certificate is deleted.
 - `docs/ROADMAP.md` said anchors permanently change coordinates. That was wrong (`parse()` builds new objects per run); the line is corrected.
-- Replay reliability, voice accuracy and battery use have not been measured.
+- Replay reliability and battery use have not been measured.

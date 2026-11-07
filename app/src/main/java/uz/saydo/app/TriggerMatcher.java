@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Advanced Offline Speech Trigger Matching Engine.
+ * Name matching (normalising and similarity) used by macro search.
  * Features Damerau-Levenshtein edit distance (with transposition detection),
  * comprehensive phonetic matching (Metaphone + Soundex hybrid), contraction expansion,
  * homophone canonicalization, token windowing, and sibling prefix disambiguation.

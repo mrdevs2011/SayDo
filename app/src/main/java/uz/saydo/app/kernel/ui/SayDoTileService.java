@@ -6,11 +6,10 @@ import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 
 import uz.saydo.app.FloatService;
-import uz.saydo.app.VoiceService;
 
 /**
  * System Quick Settings Tile Service (API 24+).
- * Provides one-tap toggle for SayDo voice listening and floating overlay in notification shade.
+ * Provides one-tap toggle for the SayDo floating button in notification shade.
  */
 public final class SayDoTileService extends TileService {
 
@@ -28,7 +27,6 @@ public final class SayDoTileService extends TileService {
         if (isActive) {
             // Stop services
             stopService(new Intent(this, FloatService.class));
-            stopService(new Intent(this, VoiceService.class));
         } else {
             // Start services
             Intent floatIntent = new Intent(this, FloatService.class);

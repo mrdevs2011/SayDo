@@ -45,14 +45,4 @@ final class Store {
         if (c == null) return;
         SettingsRepository.getInstance(c).setBatteryAsked(true);
     }
-
-    static boolean voiceSetupGuided(Context c) {
-        if (c == null) return true;
-        return SettingsRepository.getInstance(c).isVoiceGuided();
-    }
-
-    static void setVoiceSetupGuided(Context c, boolean guided) {
-        if (c == null) return;
-        SettingsRepository.getInstance(c).setVoiceGuided(guided);
-    }
 }
