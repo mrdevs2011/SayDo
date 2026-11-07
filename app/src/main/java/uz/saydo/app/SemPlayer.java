@@ -111,6 +111,9 @@ final class SemPlayer {
         long sigBefore;
         boolean started;
         int noBox;
+        int nudges;
+        int stuckRun;
+        int flips;
     }
 
     private void pollNode(final GestureService.G g, final GestureService.G prev, final BooleanSupplier alive,
@@ -133,6 +136,13 @@ final class SemPlayer {
         }
         // Results of a search or filter can take a while to show; give a step after typing longer.
         long limit = (prev != null && "text".equals(prev.type)) ? 15000 : FIND_MS;
+        // Search results that never appear after SET_TEXT: write the text again (empty, then full) to wake the watcher.
+        if (prev != null && "text".equals(prev.type) && !prev.textToInject.isEmpty()
+                && ((now - t0 > 4000 && ss.nudges == 0) || (now - t0 > 9000 && ss.nudges == 1))) {
+            ss.nudges++;
+            DebugLog.i("Play", "step " + (index + 1) + " results not showing, typing the text again");
+            nudgeText(prev);
+        }
         if (now - t0 > limit) {
             DebugLog.w("Play", "step " + (index + 1) + " target not found after " + (now - t0) + " ms");
             cb.done(false, "ko'rinmadi");
@@ -175,9 +185,15 @@ final class SemPlayer {
             long after = box2 != null ? signature(box2) : before;
             recycleQuietly(box2);
             if (StepLogic.stuck(before, after)) {
-                if (ss.dir > 0 && !ss.forwardDone) { ss.forwardDone = true; ss.dir = -1; }
-                else if (ss.dir < 0 && ss.forwardDone) ss.tries = MAX_SCROLL_TRIES;
-                else if (ss.dir < 0) { ss.dir = 1; ss.forwardDone = true; }
+                // The swipe did not move the list: try once more, then turn round; give up after both ways.
+                if (++ss.stuckRun >= 2) {
+                    ss.stuckRun = 0;
+                    ss.flips++;
+                    ss.dir = -ss.dir;
+                    if (ss.flips >= 3) ss.tries = MAX_SCROLL_TRIES;
+                }
+            } else {
+                ss.stuckRun = 0;
             }
             ss.busy = false;
             pollNode(g, prev, alive, cb, index, t0, ss);
@@ -208,11 +224,35 @@ final class SemPlayer {
         }
         if (ok) {
             DebugLog.i("Play", "step " + (index + 1) + " clicked node directly");
+            final long clickAt = SystemClock.uptimeMillis();
+            if (isNavUp(g.anchor)) {
+                // An "up" button pressed while the page is still opening can be ignored: if no screen change
+                // followed, press it once more (safe: it is a navigation button, not a toggle).
+                h.postDelayed(() -> {
+                    if (!alive.getAsBoolean()) return;
+                    if (svc.lastWindowChangeAt < clickAt) {
+                        AccessibilityNodeInfo again = find(g.anchor, g.pkg);
+                        if (again != null) {
+                            DebugLog.i("Play", "step " + (index + 1) + " up button had no effect, pressing again");
+                            again.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            recycleQuietly(again);
+                        }
+                    }
+                    h.postDelayed(() -> { if (alive.getAsBoolean()) cb.done(true, ""); }, 250);
+                }, 1300);
+                return;
+            }
             h.postDelayed(() -> { if (alive.getAsBoolean()) cb.done(true, ""); }, 250);
             return;
         }
         DebugLog.i("Play", "step " + (index + 1) + " node not clickable, gesture on its position");
         tapAt(g, b.centerX(), b.centerY(), alive, cb);
+    }
+
+    private static boolean isNavUp(NodeAnchor a) {
+        if (a == null) return false;
+        String d = a.getContentDescription();
+        return "Navigate up".equalsIgnoreCase(d) || "Navigate back".equalsIgnoreCase(d);
     }
 
     private void tapAt(GestureService.G g, double x, double y, BooleanSupplier alive, Result cb) {
@@ -267,6 +307,29 @@ final class SemPlayer {
             return;
         }
         h.postDelayed(() -> pollText(g, alive, cb, index, t0, attempt + 1), 300);
+    }
+
+    private void nudgeText(final GestureService.G t) {
+        AccessibilityNodeInfo n = findField(t);
+        if (n == null) return;
+        try {
+            Bundle empty = new Bundle();
+            empty.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "");
+            n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, empty);
+        } finally {
+            recycleQuietly(n);
+        }
+        h.postDelayed(() -> {
+            AccessibilityNodeInfo m = findField(t);
+            if (m == null) return;
+            try {
+                Bundle a = new Bundle();
+                a.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, t.textToInject);
+                m.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, a);
+            } finally {
+                recycleQuietly(m);
+            }
+        }, 250);
     }
 
     /** The recorded field, else the one that has input focus, else the only editable field on screen. */
