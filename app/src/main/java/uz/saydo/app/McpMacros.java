@@ -71,8 +71,11 @@ final class McpMacros {
 
     // ------------------------------------------------------------------ catalog
 
+    /** What the AI may know about: macros with a PIN step are left out everywhere (list, find, describe, run). */
     private List<Macro> all() {
-        return MacroRepository.getInstance(ctx).getAll();
+        List<Macro> out = new ArrayList<>();
+        for (Macro m : MacroRepository.getInstance(ctx).getAll()) if (!McpGuard.hiddenFromAi(m)) out.add(m);
+        return out;
     }
 
     /** Description shown to the AI: the owner's/AI's text, else generated from the steps. */
@@ -122,13 +125,20 @@ final class McpMacros {
         }
         List<MacroSearch.Doc> docs = new ArrayList<>();
         for (Macro m : all) docs.add(doc(m));
-        List<MacroSearch.Hit> hits = MacroSearch.rank(k, docs, 2, MacroSearch.MIN_SCORE);
+        List<MacroSearch.Hit> hits = MacroSearch.rank(k, docs, 3, MacroSearch.MIN_SCORE);
         if (!hits.isEmpty() && hits.get(0).score >= 0.75
                 && (hits.size() < 2 || hits.get(0).score - hits.get(1).score >= 0.1)) {
             for (Macro m : all) if (m.id.equals(hits.get(0).doc.id)) return m;
         }
-        throw new McpCommands.Fail("No macro clearly matches \"" + McpFormat.clip(k, 40)
-                + "\". Use find_macro with the goal, or list_macros.");
+        StringBuilder close = new StringBuilder();
+        for (MacroSearch.Hit h : hits) {
+            if (close.length() > 0) close.append(", ");
+            close.append('"').append(h.doc.trigger).append('"');
+        }
+        throw new McpCommands.Fail("No macro clearly matches \"" + McpFormat.clip(k, 40) + "\""
+                + (hits.size() > 1 && hits.get(0).score >= 0.75 ? " (several fit equally: " + close + ")"
+                : hits.isEmpty() ? "" : " (closest: " + close + ")")
+                + ". Use find_macro with the goal, or list_macros.");
     }
 
     // ------------------------------------------------------------------ tools
@@ -276,8 +286,13 @@ final class McpMacros {
         if (completed[0]) return "completed \"" + m.trigger + "\" (" + m.gestures.size() + " steps)" + inFront();
         GestureService s = GestureService.instance;
         int f = s == null ? -1 : s.lastRunFirstFail();
-        return "stopped \"" + m.trigger + "\"" + (f >= 0 ? " at step " + (f + 1) + " of " + m.gestures.size() : "")
-                + inFront() + ". read_screen to see where it is.";
+        String line = "";
+        if (f >= 0) {
+            List<String> lines = MacroDescriber.stepLines(m, labels, Math.max(1, f + 1));
+            if (f < lines.size()) line = lines.get(f);
+        }
+        return StopReason.message(m.trigger, f, m.gestures.size(), line, s == null ? "" : s.lastStopReason(),
+                inFront());
     }
 
     private String inFront() {

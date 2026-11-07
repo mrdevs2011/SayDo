@@ -42,6 +42,40 @@ Stage 0 was run on a Galaxy S22+ (SM-S906B, Android 16) with build `1dffca6`, Se
 | MCP compact tools (2.14.0) | **Built and unit/relay tested; NOT deployed, NOT run through MCP on a phone** | Compact `read_screen` (query, bounds, max_elements), `act` (15 steps in one call), `read_notifications` (opt-in setting + Notification access), `canTakeScreenshot` in the accessibility config, bubble untouchable during commands, screenshot defaults 540/q50. JVM unit tests (format, act parser, notification buffer) and relay e2e test (schemas, act and read_notifications with a simulated phone). Live relay still has the old tools, so none of the new tools were called on a phone. Unverified: act timing and retries on real screens, Telegram flows, whether the bubble stopped swallowing taps, whether the screenshot SecurityException is gone, anything needing Notification access (the owner grants it). See `docs/MCP.md` |
 | MCP macro first (2.15.0) | **Built; JVM and relay tests pass; NOT deployed; NOTHING tested on a phone** | New tools `find_macro`, `describe_macro`, `set_macro_info`, `scroll_to`; `list_macros` (paged, compact) and `run_macro` (confirm, params) changed. New macro fields `description` and `sensitiveReviewed` (old JSON loads unchanged), description generated at the end of a recording, Info dialog in MacroStudio, ranking over trigger/aliases/description/apps/anchors in Uzbek, Russian, English, money-app detection, sensitive macros need `confirm=true` plus an Allow notification on the phone (switchable), screen tools refused in money apps (switchable, default off). Evidence: JVM unit tests (ranking, descriptions, guard decisions, JSON compatibility), relay e2e with a simulated phone, CI build. **Unverified:** the approval notification (channel, heads-up, Allow/Deny, 60 s timeout, notification permission), the Info dialog, the description generated from a real recording (app labels, anchor texts), ranking quality on the owner's real macros, `scroll_to`, the money-app refusals on a real banking app, `run_macro` result text, whether `params` can ever apply (recorder makes no slots), the live relay (still the old tools). See `docs/MCP.md` |
 
+## Branch `safe-smart`: safety and search work (written without a phone, UNTESTED on a phone)
+
+Evidence is JVM unit tests only (263 tests pass with a local javac + JUnit run; android classes are stubs). Nothing below has
+been seen on a phone. No success rates exist.
+
+| Feature | State |
+|---|---|
+| `wait_user` step (fingerprint/face/lock screen) | **Built, untested on a phone.** Recording: `AuthWatch` (hook in `EventRecorder.onEvent`) + `AuthRecordLogic` + `AuthDetector` turn "an auth prompt opened and closed with no touch of the owner inside" into a step `wait_user` (action `biometric`). Replay: `WaitUserPlayer` (hook in `GestureService.step`) waits for the prompt (5 s grace; none shown = continues), vibrates, shows the toast and a notification "Barmoq izingizni qo'ying", continues when the prompt is gone, stops after 60 s with a clear message. Uses window events only, never screen content (FLAG_SECURE safe by design). **Unverified:** the window class/package names of the prompt on real phones (guessed from AOSP/Samsung, in `AuthDetector`), whether the recorder sees the prompt at all, vibration/toast/notification on the lock screen, whether an app behind the prompt gets a window event when it closes |
+| PIN taps as sensitive steps | **Built, untested on a phone.** Taps made inside the auth prompt are recorded as ordinary steps with `sens=true`. On disk each such step is AES-256-GCM encrypted with a non-extractable Android Keystore key (`KeystoreBox`, `SensitiveSteps`, applied in `MacroRepository`); without Keystore those macros are not written at all. A macro with such a step is always `sensitive`, shows a lock badge in the list, is left out of export, import keeps it, and is hidden from MCP list/find/describe/run (`McpGuard.hiddenFromAi`). Descriptions never use their labels. First-time warning dialog (`PinWarning`, sets `sensitiveReviewed`). **Unverified:** that the keypad sends click events (if not, a wait_user step is recorded instead, which still works for the owner), Keystore on the phones, replay of taps in the systemui window (`appRoots` for that package), the dialog and badge. Limits: a key lost (reset/new phone) drops that macro; text typed on the on-screen keyboard is never recorded (existing rule); anyone who can start the macro on the unlocked phone makes it enter the PIN |
+| Safety review | **Done by reading code, fixes untested on a phone.** See "Safety review" below |
+| MCP search (synonyms, suffixes) | **Built, JVM tests only.** About 40 more concepts in Uzbek/Russian/English (alarm, volume, flashlight, taxi, notes, mail, downloads and others) and "stem + a" suffix handling. Ranking on the owner's real macros is not measured |
+| Clearer stop messages | **Built, JVM tests only.** `run_macro` now says the step, its label and the likely reason (`StopReason`), unknown macro names list the closest ones |
+
+### Safety review (read from the code; no pen test)
+
+Fixed on this branch:
+- `McpApproval`: on Android 12 and older the Allow/Deny receiver is not private, and its action name was guessable (a counter). Another app could have answered Allow. The action now has a random part.
+- Money-app guard now also covers `read_screen`, `screenshot` and `scroll_to` (before, only taps/typing were refused, so a bank balance could be read to the AI).
+- Logs: crash lines in `McpCommands`/`McpService` printed the full exception text; now only the class name. Checked: typed text and notification content are not logged (only lengths and tool names); PIN steps log nothing about labels.
+- Backup: `allowBackup=false` was already set; added `dataExtractionRules` and `fullBackupContent=false` so device transfer is excluded too.
+- PIN steps: encrypted on disk, left out of export, hidden from AI.
+- `VIBRATE` permission added (normal permission) for the wait step.
+
+Checked and fine: no exported activity except the launcher; services are `exported=false` or protected by the system bind permission; all PendingIntents are immutable; cleartext traffic off and the relay client refuses non-https; the relay stores only hashes of tokens.
+
+Not fixed, for the owner to decide:
+1. MCP token and device secret sit in plain SharedPreferences (`saydo_mcp`), app-private and not backed up. Encrypting them with the Keystore is possible but changes the registration path, so it was not done blind.
+2. Error text of unexpected exceptions is still returned to the AI (`Phone error in <tool>: ... message`); messages can contain screen details.
+3. The voice transcript and matched trigger are kept in the in-memory debug log and in logcat (`SayDoDebug`) and can be copied from the Debug screen. Not typed text or notifications, but speech.
+4. `act`'s money-app guard is per step; an `open_app` inside `act` is covered, a money app opened by a macro run (not by AI) is out of scope.
+5. Any app with Accessibility-level access on the phone can see what SayDo's accessibility service sees. Not something SayDo can change.
+6. `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and `SYSTEM_ALERT_WINDOW` are powerful permissions that the app needs; Google Play policy may object to the first.
+7. The Allow/Deny approval depends on notification permission; without it sensitive macros are denied (safe default).
+
 ## Fixed, with evidence
 
 - START button covering the list (`97f800d`): list bottom y=2036, button top y=2059 on the S22+. Not re-tested with 8+ macros.

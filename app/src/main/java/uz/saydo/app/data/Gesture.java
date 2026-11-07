@@ -26,6 +26,9 @@ public final class Gesture implements Serializable {
     public static final String TYPE_TEXT = "text";
     /** Scroll of a list recorded from accessibility events (dx, dy in px; dy > 0 = content moved up). */
     public static final String TYPE_SCROLL = "scroll";
+    /** The macro pauses until the owner has passed a fingerprint/face/lock screen (action = reason, "biometric"). */
+    public static final String TYPE_WAIT_USER = "wait_user";
+    public static final String REASON_BIOMETRIC = "biometric";
 
     public final String type;
     public final String action;
@@ -47,6 +50,8 @@ public final class Gesture implements Serializable {
     public final int scrollDy;
     /** True when recorded from accessibility events (a view was clicked), not from raw touches. */
     public final boolean semantic;
+    /** True for a step that holds a secret (a PIN digit tapped on a lock screen). Stored encrypted, never shown. */
+    public final boolean sensitive;
 
     public Gesture(String type, String action, double x, double y,
                    long startTime, long endTime, long duration, List<TouchPoint> points) {
@@ -70,6 +75,15 @@ public final class Gesture implements Serializable {
                    long startTime, long endTime, long duration, List<TouchPoint> points,
                    NodeAnchor anchor, String variableSlot, String textToInject, String screenPkg,
                    String winCls, int scrollDx, int scrollDy, boolean semantic) {
+        this(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, textToInject, screenPkg,
+                winCls, scrollDx, scrollDy, semantic, false);
+    }
+
+    public Gesture(String type, String action, double x, double y,
+                   long startTime, long endTime, long duration, List<TouchPoint> points,
+                   NodeAnchor anchor, String variableSlot, String textToInject, String screenPkg,
+                   String winCls, int scrollDx, int scrollDy, boolean semantic, boolean sensitive) {
+        this.sensitive = sensitive;
         this.winCls = winCls != null ? winCls.trim() : "";
         this.scrollDx = scrollDx;
         this.scrollDy = scrollDy;
@@ -153,16 +167,26 @@ public final class Gesture implements Serializable {
         return new Gesture(TYPE_TEXT, "", 0.5, 0.5, startTime, startTime + 50, 50, Collections.emptyList(), null, variableSlot, text);
     }
 
+    /** Pause for the owner (fingerprint, face, lock screen). Needs no screen content, so it works on secure screens. */
+    public static Gesture createWaitUser(String reason, long startTime) {
+        return new Gesture(TYPE_WAIT_USER, reason == null || reason.isEmpty() ? REASON_BIOMETRIC : reason,
+                0.5, 0.5, startTime, startTime + 100, 100, Collections.emptyList(), null, "", "");
+    }
+
+    public Gesture withSensitive(boolean s) {
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic, s);
+    }
+
     public Gesture withAnchor(NodeAnchor newAnchor) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, newAnchor, variableSlot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, newAnchor, variableSlot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic, sensitive);
     }
 
     public Gesture withVariableSlot(String slot) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, slot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, slot, textToInject, screenPkg, winCls, scrollDx, scrollDy, semantic, sensitive);
     }
 
     public Gesture withText(String text) {
-        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, text, screenPkg, winCls, scrollDx, scrollDy, semantic);
+        return new Gesture(type, action, x, y, startTime, endTime, duration, points, anchor, variableSlot, text, screenPkg, winCls, scrollDx, scrollDy, semantic, sensitive);
     }
 
     public JSONObject toJson() {
@@ -201,6 +225,7 @@ public final class Gesture implements Serializable {
             if (scrollDx != 0) obj.put("sdx", scrollDx);
             if (scrollDy != 0) obj.put("sdy", scrollDy);
             if (semantic) obj.put("sem", true);
+            if (sensitive) obj.put("sens", true);
         } catch (JSONException ignored) {
         }
         return obj;
@@ -240,7 +265,8 @@ public final class Gesture implements Serializable {
         String pkg = obj.optString("pkg", "");
 
         return new Gesture(type, action, x, y, st, et, dur, pointsList, anchor, varSlot, txt, pkg,
-                obj.optString("wcls", ""), obj.optInt("sdx", 0), obj.optInt("sdy", 0), obj.optBoolean("sem", false));
+                obj.optString("wcls", ""), obj.optInt("sdx", 0), obj.optInt("sdy", 0), obj.optBoolean("sem", false),
+                obj.optBoolean("sens", false));
     }
 
     @Override

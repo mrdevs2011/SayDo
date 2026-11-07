@@ -36,7 +36,7 @@ final class MacroDescriber {
 
     /** Visible text of a clicked element, or "" when it must not be used. */
     static String anchorLabel(Gesture g) {
-        if (g == null || g.anchor == null) return "";
+        if (g == null || g.anchor == null || g.sensitive) return "";
         if (g.type.equals(Gesture.TYPE_TEXT)) return "";
         NodeAnchor a = g.anchor;
         if (a.isEditable() || a.getClassName().toLowerCase(Locale.ROOT).contains("edittext")) return "";
@@ -156,6 +156,7 @@ final class MacroDescriber {
             sb.append(i).append(' ');
             String kind = g.type;
             if (g.type.equals(Gesture.TYPE_GLOBAL) && !g.action.isEmpty()) kind = g.action;
+            if (g.type.equals(Gesture.TYPE_WAIT_USER)) kind = "wait_user (owner: " + g.action + ")";
             sb.append(kind);
             if (!g.variableSlot.isEmpty()) sb.append(" {").append(g.variableSlot).append('}');
             String t = anchorLabel(g);

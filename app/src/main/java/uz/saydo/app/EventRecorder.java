@@ -41,6 +41,7 @@ final class EventRecorder {
     private final StepLogic.NavDetector nav = new StepLogic.NavDetector();
     private final Set<String> launchers = new HashSet<>();
     private final Set<String> ignored = new HashSet<>();
+    private final AuthWatch auth = new AuthWatch();
     private long t0;
     private boolean active;
     private int sw = 1080, sh = 2340;
@@ -71,6 +72,7 @@ final class EventRecorder {
         steps.clear();
         scroll.reset();
         nav.reset();
+        auth.reset();
         lastType = "";
         lastFieldKey = "";
         dropped = 0;
@@ -115,6 +117,9 @@ final class EventRecorder {
         int type = e.getEventType();
         long now = SystemClock.uptimeMillis();
         boolean launcher = launchers.contains(pkg);
+
+        // Fingerprint / face / lock-screen prompts: wait_user step, or sensitive PIN taps (see AuthWatch).
+        if (auth.onEvent(e, pkg, type, now, t0, steps, sw, sh)) return;
 
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (ignored.contains(pkg) && !launcher) return;
