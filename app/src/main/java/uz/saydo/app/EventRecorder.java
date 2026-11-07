@@ -207,7 +207,8 @@ final class EventRecorder {
         DebugLog.i("Rec", "step #" + steps.size() + " " + type + " pkg=" + pkg
                 + " id=" + !anchor.getViewIdResourceName().isEmpty()
                 + " label=" + (!anchor.getText().isEmpty() || !anchor.getContentDescription().isEmpty()
-                || !anchor.getChildText().isEmpty()) + " matchable=" + anchor.canBeMatched());
+                || !anchor.getChildText().isEmpty()) + " matchable=" + anchor.canBeMatched()
+                + " '" + SemPlayer.lbl(pkg, anchor) + "'");
     }
 
     private static String firstEventLabel(AccessibilityEvent e) {
