@@ -130,7 +130,9 @@ final class SemPlayer {
             act(g, n, alive, cb, index);
             return;
         }
-        if (now - t0 > FIND_MS) {
+        // Results of a search or filter can take a while to show; give a step after typing longer.
+        long limit = (prev != null && "text".equals(prev.type)) ? 15000 : FIND_MS;
+        if (now - t0 > limit) {
             DebugLog.w("Play", "step " + (index + 1) + " target not found after " + (now - t0) + " ms");
             cb.done(false, "ko'rinmadi");
             return;
