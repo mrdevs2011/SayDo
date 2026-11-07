@@ -292,6 +292,12 @@ final class SemPlayer {
 
     private void doScroll(final GestureService.G g, final GestureService.G next, final BooleanSupplier alive,
                           final Result cb, final int index) {
+        waitQuiet(alive, () -> doScrollNow(g, next, alive, cb, index, SystemClock.uptimeMillis()));
+    }
+
+    private void doScrollNow(final GestureService.G g, final GestureService.G next, final BooleanSupplier alive,
+                             final Result cb, final int index, final long t0) {
+        if (!alive.getAsBoolean()) return;
         // If the next target is already on screen, the scroll is not needed (the list may be elsewhere).
         if (next != null && ("tap".equals(next.type) || "hold".equals(next.type)) && GestureService.usableAnchor(next.anchor)) {
             AccessibilityNodeInfo t = find(next.anchor, next.pkg);
@@ -307,7 +313,12 @@ final class SemPlayer {
         }
         AccessibilityNodeInfo box = findScrollable(g.pkg, g.anchor);
         if (box == null) {
-            DebugLog.w("Play", "step " + (index + 1) + " scroll: no scrollable view, skipped");
+            // The app may still be opening: wait for its list before giving up.
+            if (SystemClock.uptimeMillis() - t0 < 6000) {
+                h.postDelayed(() -> doScrollNow(g, next, alive, cb, index, t0), POLL_MS);
+                return;
+            }
+            DebugLog.w("Play", "step " + (index + 1) + " scroll: no scrollable view after 6 s, skipped");
             cb.done(true, "");
             return;
         }
