@@ -1,6 +1,6 @@
 # SayDo
 
-Android app (Java, `uz.saydo.app`) that records touch macros and replays them on a voice command.
+Android app (Java, `uz.saydo.app`) that records touch macros and replays them. Control is remote only, through MCP (no voice).
 `relay/` is a separate TypeScript Vercel project for MCP remote control.
 
 Read `docs/STATUS.md` and `docs/PLAN.md` first.
@@ -27,7 +27,7 @@ Read `docs/STATUS.md` and `docs/PLAN.md` first.
 
 - Release builds are not debuggable, so `run-as` does not work.
 - Logs: `adb logcat -d | grep SayDoDebug`. Prefixes: `Rec:`, `Play:`, `Home:`, `Toast:`.
-- Grant by ADB: `pm grant` for mic and notifications, `appops set uz.saydo.app SYSTEM_ALERT_WINDOW allow`.
+- Grant by ADB: `pm grant` for notifications, `appops set uz.saydo.app SYSTEM_ALERT_WINDOW allow`.
 - Accessibility: `settings put secure enabled_accessibility_services uz.saydo.app/uz.saydo.app.GestureService`,
   then `settings put secure accessibility_enabled 1`. Check `dumpsys accessibility`; retry if not bound.
 - `am force-stop` unbinds Accessibility.

@@ -16,7 +16,7 @@ import java.util.Locale;
 import uz.saydo.app.data.Macro;
 
 /**
- * High-performance, zero-crash RecyclerView adapter for voice macros.
+ * High-performance, zero-crash RecyclerView adapter for macros.
  * Operates on strongly-typed immutable Macro domain models and ID-based actions.
  */
 final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {

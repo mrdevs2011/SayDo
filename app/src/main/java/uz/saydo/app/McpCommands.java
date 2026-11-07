@@ -276,7 +276,6 @@ final class McpCommands {
         GestureService s = GestureService.instance;
         o.put("accessibility_on", s != null);
         o.put("full_control", cfg.fullControl());
-        o.put("voice_listening", VoiceService.running);
         o.put("macros", MacroRepository.getInstance(ctx).getAll().size());
         if (s != null) {
             int[] wh = onMain(3000, s::screenSize);

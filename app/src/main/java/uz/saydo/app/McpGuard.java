@@ -46,7 +46,7 @@ public final class McpGuard {
 
     /**
      * Macros that hold a secret step (PIN) do not exist for AI: not listed, not found, not described,
-     * not runnable. Only the owner starts them (voice or app).
+     * not runnable. Only the owner starts them (from the app).
      */
     public static boolean hiddenFromAi(Macro m) {
         return m != null && m.hasSensitiveSteps();

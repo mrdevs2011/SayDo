@@ -269,7 +269,7 @@ final class MacroSearch {
         }
         double s = qCov * (0.7 + 0.3 * docCov);
 
-        // Whole phrase against the trigger or an alias, with the voice matcher's own tolerance.
+        // Whole phrase against the trigger or an alias, with fuzzy tolerance.
         // Only when the goal is about as short as the name: a long sentence that merely contains the
         // trigger word ("youtube ... music") must not make the one-word macro win.
         String nq = TriggerMatcher.norm(query);

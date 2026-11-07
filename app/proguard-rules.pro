@@ -14,7 +14,6 @@
 -keep public class uz.saydo.app.SayDoApp { *; }
 -keep public class uz.saydo.app.MainActivity { *; }
 -keep public class uz.saydo.app.TriggerActivity { *; }
--keep public class uz.saydo.app.VoiceService { *; }
 -keep public class uz.saydo.app.GestureService { *; }
 -keep public class uz.saydo.app.FloatService { *; }
 
@@ -24,9 +23,6 @@
     public void onInterrupt();
     protected void onServiceConnected();
 }
-
-# Keep Speech Recognition Callbacks
--keepclassmembers class * implements android.speech.RecognitionListener { *; }
 
 # Strip verbose debug logging in release builds while preserving warnings and errors
 -assumenosideeffects class android.util.Log {

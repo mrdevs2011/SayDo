@@ -10,16 +10,6 @@ known (Xiaomi, Samsung, Huawei, Oppo, Vivo, OnePlus), otherwise the standard bat
 screens. The component names are guesses from public sources and differ between OS versions; only Samsung was
 tried on a phone (S22+), and the first START now asks for battery exemption only once, as an optional step.
 
-## SpeechRecognizer errors
-
-`VoiceService` handles each `SpeechRecognizer` error code with a restart delay: no-match and speech-timeout restart
-quickly, busy and client errors back off and recreate the recognizer, audio errors recreate it, and missing
-permission stops the service. The delays are in the code (`VoiceService.onError`), not repeated here.
-
-The earlier `ERROR_CLIENT` loop (about one per second) was caused by SayDo's own audio-focus request being taken away
-each time the recognizer started. Audio focus is no longer requested. A 60 s silent test went from 40 CLIENT errors to
-0. Recognition quality is untested. Google's speech service still plays a sound at the start and end of each session.
-
 ## Crash log and memory
 
 `SayDoApp` writes uncaught exceptions with device model, Android version and memory numbers to `app_crash.log` and

@@ -1,5 +1,7 @@
 # SayDo — Ishonchlilik Roadmap
 
+> **Eslatma (2026-11-07):** ovoz tizimi (SpeechRecognizer, ovoz darvozasi, Vosk rejasi) 2.15.0 da to'liq olib tashlandi; bu fayldagi ovozga oid bo'limlar bekor qilingan. Boshqaruv endi faqat MCP orqali.
+>
 > **Eslatma (2026-11-06):** joriy ish tartibi [PLAN.md](PLAN.md) da, holat [STATUS.md](STATUS.md) da. Quyidagi eski bosqichlardan
 > ba'zilari endi to'g'ri kelmaydi va o'z joyida belgilangan. `kernel/` ning ishlatilmagan qismi o'chirildi (qolgani STATUS.md da).
 

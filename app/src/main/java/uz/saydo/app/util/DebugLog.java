@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** In-memory advanced debug log — especially STT / voice pipeline. */
+/** In-memory advanced debug log — especially recording / replay. */
 public final class DebugLog {
     public interface Listener { void onLog(); }
 
@@ -48,16 +48,8 @@ public final class DebugLog {
         append("E", tag, msg);
     }
 
-    public static synchronized void stt(String msg) {
-        append("STT", "Voice", msg);
-    }
-
     public static synchronized void match(String msg) {
         append("MATCH", "Trigger", msg);
-    }
-
-    public static synchronized void state(String msg) {
-        append("STATE", "Voice", msg);
     }
 
     private static void append(String level, String tag, String msg) {

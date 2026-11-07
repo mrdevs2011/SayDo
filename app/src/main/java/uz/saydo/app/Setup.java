@@ -24,7 +24,6 @@ public final class Setup {
     public static final int OK = 0;
     public static final int NEED_OVERLAY = 1;
     public static final int NEED_ACCESSIBILITY = 2;
-    public static final int NEED_MIC = 3;
     public static final int NEED_NOTIF = 4;
     /** Optional: never returned by missing(); used only to open the battery page on request. */
     public static final int NEED_BATTERY = 5;
@@ -59,13 +58,12 @@ public final class Setup {
         }
     }
 
-    /** Only what is needed to run. Battery and the speech pack are optional and never block START. */
+    /** Only what is needed to run. Battery is optional and never block START. */
     public static int missing(Context c) {
         if (c == null) return OK;
         return uz.saydo.app.util.SetupPolicy.firstMissing(
                 Settings.canDrawOverlays(c),
                 accessibilityOn(c),
-                c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
                 Build.VERSION.SDK_INT >= 33,
                 Build.VERSION.SDK_INT < 33
                         || c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED);
@@ -112,10 +110,6 @@ public final class Setup {
                 i = accessibilityIntent(c);
                 msg = "Turn on SayDo. If greyed out: App info > 3 dots > Allow restricted settings";
                 break;
-            case NEED_MIC:
-                i = new Intent(c, MainActivity.class).putExtra(MainActivity.EXTRA_ASK_MIC, true);
-                msg = "Allow microphone for voice shortcuts";
-                break;
             case NEED_NOTIF:
                 i = new Intent(c, MainActivity.class).putExtra(MainActivity.EXTRA_ASK_NOTIF, true);
                 msg = "Allow notifications for background service";
@@ -132,7 +126,7 @@ public final class Setup {
                 if (Build.VERSION.SDK_INT >= 23) {
                     i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                             Uri.parse("package:" + c.getPackageName()));
-                    msg = "Allow background activity so voice shortcuts work with screen off";
+                    msg = "Allow background activity so remote control (MCP) works with screen off";
                 } else {
                     return;
                 }

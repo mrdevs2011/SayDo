@@ -3,7 +3,6 @@ package uz.saydo.app.metrics;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.os.Build;
-import android.speech.SpeechRecognizer;
 import android.util.Log;
 
 import org.json.JSONObject;
@@ -30,7 +29,7 @@ public final class Metrics {
     private static final String TAG = "SayDoMetrics";
     private static final long MAX_BYTES = 1024 * 1024;
 
-    /** Where the next macro run comes from: "voice", "manual", "bench". */
+    /** Where the next macro run comes from: "mcp", "manual", "bench". */
     public static volatile String nextRunSource = "manual";
 
     /** Id of the most recently started run (for attaching a human verdict). */
@@ -62,30 +61,6 @@ public final class Metrics {
 
     public static String deviceInfo() {
         return deviceInfo;
-    }
-
-    // ------------------------------------------------------------------ voice
-
-    public static void voiceHeard(String text, String matchedTrigger, boolean partial, long latencyMs) {
-        log(ev("voice_heard")
-                .putOpt("text", text)
-                .putOpt("trig", matchedTrigger == null ? "" : matchedTrigger)
-                .putOpt("partial", partial)
-                .putOpt("lat", latencyMs));
-    }
-
-    /** Voice gate opened (level over threshold) and a recognition session started. */
-    public static void gateOpen(String mode, double db) {
-        log(ev("gate_open").putOpt("mode", mode).putOpt("db", Math.round(db * 10) / 10.0));
-    }
-
-    /** Stream mode did not work on this phone; switched to restart mode. */
-    public static void gateFallback(String reason) {
-        log(ev("gate_fallback").putOpt("reason", reason));
-    }
-
-    public static void voiceError(int code, String name) {
-        log(ev("voice_error").putOpt("code", code).putOpt("name", name));
     }
 
     // ------------------------------------------------------------------ macro runs
@@ -122,15 +97,6 @@ public final class Metrics {
     /** Human ground truth: did the macro really reach the right end state? */
     public static void verdict(long run, boolean ok, int brokeAtStep) {
         log(ev("verdict").putOpt("run", run).putOpt("ok", ok).putOpt("broke", brokeAtStep));
-    }
-
-    public static void benchVoice(VoiceBench.Trial t) {
-        if (t == null) return;
-        log(ev("bench_voice")
-                .putOpt("exp", t.expected)
-                .putOpt("got", t.got)
-                .putOpt("res", t.res.name())
-                .putOpt("lat", t.latencyMs));
     }
 
     // ------------------------------------------------------------------ read / report
@@ -212,14 +178,9 @@ public final class Metrics {
             PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
             ver = pi.versionName;
         } catch (Throwable ignored) {}
-        boolean onDevice = false;
-        try {
-            onDevice = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(c);
-        } catch (Throwable ignored) {}
         return "device=" + Build.MANUFACTURER + " " + Build.MODEL
                 + " android=" + Build.VERSION.RELEASE + " (sdk " + Build.VERSION.SDK_INT + ")"
-                + " app=" + ver
-                + " onDeviceSTT=" + onDevice;
+                + " app=" + ver;
     }
 
     /** Small builder so putOpt chains don't need try/catch at each call site. */

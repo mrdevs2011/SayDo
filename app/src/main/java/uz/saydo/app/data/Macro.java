@@ -12,7 +12,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Immutable domain model representing an advanced voice-triggered automation macro.
+ * Immutable domain model representing an advanced touch-recorded automation macro.
  * Supports aliases, biometric sensitivity flags, parametric variables, and usage telemetry.
  */
 public final class Macro implements Serializable, Comparable<Macro> {

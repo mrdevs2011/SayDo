@@ -551,8 +551,6 @@ public class FloatService extends Service {
             return;
         }
         SettingsRepository.getInstance(this).setMasterOn(false);
-        try { stopService(new Intent(this, VoiceService.class)); } catch (Throwable ignored) { }
-        VoiceService.running = false;
         hide(this);
         toast("SayDo OFF");
     }
@@ -1001,7 +999,7 @@ public class FloatService extends Service {
         card.setBackground(cbg);
 
         TextView title = new TextView(this);
-        title.setText("Enter your voice trigger");
+        title.setText("Name this macro");
         title.setTextColor(Color.WHITE);
         title.setTextSize(17);
         title.setGravity(Gravity.CENTER);

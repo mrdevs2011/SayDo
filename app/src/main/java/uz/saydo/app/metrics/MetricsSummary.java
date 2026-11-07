@@ -15,28 +15,16 @@ import java.util.Map;
  * Pure Java (no Android APIs) so it can be unit-tested.
  *
  * Event schema (one JSON object per line, field "e" = type):
- *   voice_heard  {text, trig ("" = no match), partial, lat}
- *   voice_error  {code, name}
  *   run_start    {run, id, trig, steps, src}
  *   run_fail     {run, i, reason}
  *   run_end      {run, ok, fails, first, ms, cancelled}
  *   verdict      {run, ok, broke}
- *   bench_voice  {exp, got, res (HIT|WRONG|MISS), lat}
- *   gate_open    {mode (stream|restart), db}
- *   gate_fallback{reason}
  */
 public final class MetricsSummary {
 
     private MetricsSummary() {}
 
     public static final class Result {
-        // Voice (real usage)
-        public int heardFinal;
-        public int matchedFinal;
-        public int matchedPartial;
-        public final Map<String, Integer> errors = new LinkedHashMap<>();
-        public final List<Long> matchLatencies = new ArrayList<>();
-
         // Macro runs
         public int runs;
         public int runsReportedOk;
@@ -52,62 +40,17 @@ public final class MetricsSummary {
         public int falseOk;
         public final Map<Integer, Integer> brokeAtStep = new HashMap<>();
 
-        // Voice gate
-        public int gateOpens;
-        /** Gate openings followed by a matched trigger before the next opening. */
-        public int gateOpensMatched;
-        public int gateFallbacks;
-        public final Map<String, Integer> gateModes = new LinkedHashMap<>();
-
-        // Voice benchmark
-        public int benchTrials;
-        public int benchHit;
-        public int benchWrong;
-        public int benchMiss;
-        public final List<Long> benchLatencies = new ArrayList<>();
-        public final Map<String, int[]> benchPerTrigger = new LinkedHashMap<>(); // [hit, total]
     }
 
     public static Result compute(List<JSONObject> events) {
         Result r = new Result();
         Map<Long, Boolean> reportedOk = new HashMap<>();
-        boolean gatePending = false;
         if (events == null) return r;
 
         for (JSONObject ev : events) {
             if (ev == null) continue;
             String e = ev.optString("e", "");
             switch (e) {
-                case "voice_heard": {
-                    boolean partial = ev.optBoolean("partial", false);
-                    boolean matched = !ev.optString("trig", "").isEmpty();
-                    if (partial) {
-                        if (matched) r.matchedPartial++;
-                    } else {
-                        r.heardFinal++;
-                        if (matched) r.matchedFinal++;
-                    }
-                    long lat = ev.optLong("lat", -1);
-                    if (matched && lat >= 0) r.matchLatencies.add(lat);
-                    if (matched && gatePending) {
-                        r.gateOpensMatched++;
-                        gatePending = false;
-                    }
-                    break;
-                }
-                case "gate_open":
-                    r.gateOpens++;
-                    inc(r.gateModes, ev.optString("mode", "?"));
-                    gatePending = true;
-                    break;
-                case "gate_fallback":
-                    r.gateFallbacks++;
-                    break;
-                case "voice_error": {
-                    String key = ev.optString("name", "") + "(" + ev.optInt("code", -1) + ")";
-                    inc(r.errors, key);
-                    break;
-                }
                 case "run_end": {
                     r.runs++;
                     boolean ok = ev.optBoolean("ok", false);
@@ -135,28 +78,6 @@ public final class MetricsSummary {
                     }
                     break;
                 }
-                case "bench_voice": {
-                    r.benchTrials++;
-                    String res = ev.optString("res", "");
-                    String exp = ev.optString("exp", "?");
-                    int[] pt = r.benchPerTrigger.get(exp);
-                    if (pt == null) {
-                        pt = new int[2];
-                        r.benchPerTrigger.put(exp, pt);
-                    }
-                    pt[1]++;
-                    if ("HIT".equals(res)) {
-                        r.benchHit++;
-                        pt[0]++;
-                        long lat = ev.optLong("lat", -1);
-                        if (lat >= 0) r.benchLatencies.add(lat);
-                    } else if ("WRONG".equals(res)) {
-                        r.benchWrong++;
-                    } else {
-                        r.benchMiss++;
-                    }
-                    break;
-                }
                 default:
                     break;
             }
@@ -168,37 +89,6 @@ public final class MetricsSummary {
         StringBuilder sb = new StringBuilder(1024);
         sb.append("=== SayDo Metrics ===\n");
         if (deviceInfo != null) sb.append(deviceInfo).append('\n');
-
-        sb.append("\n[Ovoz benchmark]\n");
-        if (r.benchTrials == 0) {
-            sb.append("  hali o'tkazilmagan\n");
-        } else {
-            sb.append("  sinov: ").append(r.benchTrials)
-              .append("  to'g'ri: ").append(r.benchHit).append(" (").append(pct(r.benchHit, r.benchTrials)).append(")")
-              .append("  noto'g'ri trigger: ").append(r.benchWrong)
-              .append("  eshitilmadi: ").append(r.benchMiss).append('\n');
-            sb.append("  kechikish: ").append(latency(r.benchLatencies)).append('\n');
-            for (Map.Entry<String, int[]> en : r.benchPerTrigger.entrySet()) {
-                int[] v = en.getValue();
-                sb.append("   - \"").append(en.getKey()).append("\": ")
-                  .append(v[0]).append('/').append(v[1]).append(" (").append(pct(v[0], v[1])).append(")\n");
-            }
-        }
-
-        sb.append("\n[Ovoz — real foydalanish]\n");
-        sb.append("  yakuniy natijalar: ").append(r.heardFinal)
-          .append("  trigger topildi: ").append(r.matchedFinal).append(" (").append(pct(r.matchedFinal, r.heardFinal)).append(")")
-          .append("  qisman natijadan ishga tushdi: ").append(r.matchedPartial).append('\n');
-        sb.append("  kechikish (gap tugashidan): ").append(latency(r.matchLatencies)).append('\n');
-        if (!r.errors.isEmpty()) sb.append("  xatolar: ").append(r.errors).append('\n');
-
-        if (r.gateOpens > 0 || r.gateFallbacks > 0) {
-            sb.append("\n[Ovoz darvozasi]\n");
-            sb.append("  ochildi: ").append(r.gateOpens).append(' ').append(r.gateModes)
-              .append("  trigger topildi: ").append(r.gateOpensMatched)
-              .append(" (").append(pct(r.gateOpensMatched, r.gateOpens)).append(")")
-              .append("  oddiy rejimga o'tdi: ").append(r.gateFallbacks).append('\n');
-        }
 
         sb.append("\n[Makro ijrosi — ilova hisobi]\n");
         sb.append("  ishga tushirildi: ").append(r.runs)
