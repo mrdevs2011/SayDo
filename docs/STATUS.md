@@ -98,6 +98,8 @@ Not measured: the old S22+ baseline numbers below (S22+, build 2.13.0, Settings/
 
 What event recording cannot capture (Android sends no event for it): taps on views that are not accessible (games, canvas, some web views, some popup menus), Enter/Search on the on-screen keyboard (type the text and tap the result instead), the Samsung Edge panel (its handle is a system window; opening it is not recorded and its items are not replayed), secure windows and other users' windows (Android blocks both for every accessibility service). A new macro that needs these: record it with "Raw touches". Android 16 `AccessibilityService` motion events only cover mouse/stylus sources, not the touch screen, so there is no way to read touch coordinates without an overlay.
 
+Owner tests with their own apps (not done by me): (1) record a macro of 5 to 10 taps in an app you use daily, replay it 10 times, count; (2) record one with typing into a search field and a tap on the first result; (3) record one that scrolls a long list and taps an item that is only visible after scrolling; (4) record a back swipe from each edge and a home swipe; (5) record one with "Raw touches" in a game or drawing app. For each, write down which step stops the replay (the on-screen message names the step).
+
 Found on the way: Settings declares a HOME activity, so it counted as "the launcher"; a replay that starts inside an app never opened the app (fixed: the default home app only, and the first app is opened). A `uiautomator dump` unbinds the accessibility service (new: a running recording re-subscribes on reconnect).
 
 ## Record and replay: how it worked before 2.15.0, and where it failed
