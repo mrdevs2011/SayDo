@@ -34,7 +34,7 @@ import uz.saydo.app.util.StepLogic;
 final class EventRecorder {
     private static final long TEXT_QUIET_MS = 0;
 
-    private final GestureService svc;
+    private GestureService svc;
     private final Handler h = new Handler(Looper.getMainLooper());
     private final List<Gesture> steps = new ArrayList<>();
     private final StepLogic.ScrollAccum scroll = new StepLogic.ScrollAccum();
@@ -107,6 +107,8 @@ final class EventRecorder {
 
     void onEvent(AccessibilityEvent e) {
         if (!active || e == null) return;
+        GestureService cur = GestureService.instance;
+        if (cur != null) svc = cur; // the service object changes when the system rebinds it
         CharSequence pc = e.getPackageName();
         String pkg = pc != null ? pc.toString() : "";
         if (pkg.isEmpty()) return;
