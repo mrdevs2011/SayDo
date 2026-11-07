@@ -81,13 +81,7 @@ final class EventRecorder {
         sw = size[0];
         sh = size[1];
         launchers.clear();
-        try {
-            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
-            for (ResolveInfo ri : svc.getPackageManager().queryIntentActivities(home, 0)) {
-                if (ri.activityInfo != null) launchers.add(ri.activityInfo.packageName);
-            }
-        } catch (Throwable ignoredErr) {
-        }
+        launchers.addAll(svc.launcherPackages());
         ignored.clear();
         ignored.addAll(svc.ignoredPackagesPublic());
         t0 = SystemClock.uptimeMillis();
