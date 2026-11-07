@@ -198,6 +198,7 @@ public class MainActivity extends AppCompatActivity implements
     private void updateMacroList(List<Macro> macros) {
         if (destroyed || macros == null) return;
         adapter.setData(macros);
+        PinWarning.maybeShow(this, macros);
         boolean hasItems = !macros.isEmpty();
         list.setVisibility(hasItems ? View.VISIBLE : View.GONE);
         empty.setVisibility(hasItems ? View.GONE : View.VISIBLE);

@@ -89,6 +89,12 @@ public class GestureService extends AccessibilityService {
     int lastRunFirstFail() {
         return firstFail;
     }
+    private volatile String lastStopWhy = "";
+
+    /** Short reason the last run stopped ("" = it did not stop on a step). Used by MCP run_macro. */
+    String lastStopReason() {
+        return lastStopWhy;
+    }
     private int runFailures = 0;
     private String currentMacroName = "Macro";
 
@@ -98,6 +104,7 @@ public class GestureService extends AccessibilityService {
         instance = this;
         hud = new ExecutionHudOverlay(this);
         sem = new SemPlayer(this, handler);
+        waitUser = new WaitUserPlayer(this, handler);
         // View ids are only reported to a service that asks for them; anchors are stronger with ids.
         try {
             android.accessibilityservice.AccessibilityServiceInfo info = getServiceInfo();
@@ -147,6 +154,7 @@ public class GestureService extends AccessibilityService {
     static volatile EventRecorder recorder;
     volatile long lastWindowChangeAt;
     private SemPlayer sem;
+    private WaitUserPlayer waitUser;
 
     /** Turns the extra event types on only while recording, so idle cost stays as before. */
     void setRecordingEvents(boolean on) {
@@ -207,6 +215,8 @@ public class GestureService extends AccessibilityService {
         if (event == null) return;
         EventRecorder rec = recorder;
         if (rec != null) rec.onEvent(event);
+        WaitUserPlayer wu = waitUser;
+        if (wu != null) wu.onEvent(event);
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             lastWindowChangeAt = SystemClock.uptimeMillis();
             CharSequence p = event.getPackageName();
@@ -401,6 +411,7 @@ public class GestureService extends AccessibilityService {
         runId = Metrics.runStart(macro != null ? macro.optString("id", "") : "", currentMacroName, list.size());
         runStartedAt = SystemClock.uptimeMillis();
         firstFail = -1;
+        lastStopWhy = "";
         runFailures = 0;
         if (hud != null) hud.show(currentMacroName, 1, list.size());
         openFirstApp(list.get(0));
@@ -492,6 +503,19 @@ public class GestureService extends AccessibilityService {
 
         handler.postDelayed(() -> {
             if (tok != token) return;
+            if (WaitUserPlayer.TYPE.equals(g.type)) {
+                // Fingerprint / face / lock screen: wait for the owner (window events only, no screen content).
+                waitUser.run(g.action, () -> tok == token, (ok, why) -> {
+                    if (tok != token) return;
+                    if (ok) {
+                        step(list, i + 1, tok, failures);
+                    } else {
+                        recordFail(i, "wait_user");
+                        stopRun(tok, i, failures + 1, why);
+                    }
+                });
+                return;
+            }
             if ("global".equals(g.type)) {
                 int act = "home".equals(g.action) ? GLOBAL_ACTION_HOME
                         : "recents".equals(g.action) ? GLOBAL_ACTION_RECENTS
@@ -688,6 +712,7 @@ public class GestureService extends AccessibilityService {
     /** Stop the macro at step i instead of continuing on a wrong screen, and tell the user. */
     private void stopRun(int tok, int i, int failures, String why) {
         if (tok != token) return;
+        lastStopWhy = why == null ? "" : why;
         final String msg = "SayDo: \"" + currentMacroName + "\" " + (i + 1) + "-qadamda to'xtadi — " + why;
         handler.post(() -> {
             try {
