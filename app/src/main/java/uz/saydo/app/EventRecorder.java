@@ -228,7 +228,10 @@ final class EventRecorder {
     // ---------------------------------------------------------------- text
 
     private void onText(AccessibilityEvent e, String pkg, long now) {
-        if (!keyboardShowing()) return; // text changed by the app itself, or typed on an app-drawn keypad
+        if (!keyboardShowing()) {
+            DebugLog.i("Rec", "text event ignored: no keyboard window");
+            return; // text changed by the app itself, or typed on an app-drawn keypad
+        }
         AccessibilityNodeInfo src = e.getSource();
         if (src == null) return;
         try {
@@ -245,6 +248,8 @@ final class EventRecorder {
             if (StepLogic.mergeText(lastType, lastFieldKey, key) && !steps.isEmpty()) {
                 Gesture last = steps.get(steps.size() - 1);
                 steps.set(steps.size() - 1, last.withText(text));
+                DebugLog.i("Rec", "text update (" + text.length() + " chars, added=" + e.getAddedCount()
+                        + ", from=" + e.getFromIndex() + ")");
                 return;
             }
             flushScroll(now);
