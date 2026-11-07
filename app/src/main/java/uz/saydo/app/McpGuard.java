@@ -44,6 +44,14 @@ public final class McpGuard {
         return m.sensitive || (!m.sensitiveReviewed && touchesMoney(m));
     }
 
+    /**
+     * Macros that hold a secret step (PIN) do not exist for AI: not listed, not found, not described,
+     * not runnable. Only the owner starts them (voice or app).
+     */
+    public static boolean hiddenFromAi(Macro m) {
+        return m != null && m.hasSensitiveSteps();
+    }
+
     enum RunDecision { ALLOW, NEED_CONFIRM, NEED_PHONE_APPROVAL }
 
     /**
@@ -65,12 +73,12 @@ public final class McpGuard {
             "refused: the owner did not allow it on the phone (denied or no answer within 60 s). Do not retry "
                     + "unless the owner asks again.";
 
-    /** Null = allowed, else the refusal for the AI. Read-only tools never call this. */
+    /** Null = allowed, else the refusal for the AI. Screen tools (act, read, screenshot) call this; device_status and press do not. */
     static String screenActionRefusal(String foregroundPkg, boolean allowMoneyApps) {
         if (allowMoneyApps || !isMoneyPackage(foregroundPkg)) return null;
         return "refused: a money app (" + foregroundPkg + ") is in front and AI control of money apps is off. "
                 + "Only the owner can allow it on the phone (SayDo > MCP > Allow AI in money apps). "
-                + "read_screen and device_status still work.";
+                + "device_status and press home/back still work.";
     }
 
     /** Opening a money app is refused too (so act cannot open it and then use it), unless allowed. */

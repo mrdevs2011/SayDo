@@ -76,11 +76,13 @@ final class MacroAdapter extends RecyclerView.Adapter<MacroAdapter.VH> {
         if (position < 0 || position >= items.size()) return;
         final Macro m = items.get(position);
 
-        h.title.setText(m.trigger);
+        // Lock badge: the macro holds a PIN (stored encrypted, hidden from AI and export).
+        h.title.setText(m.hasSensitiveSteps() ? "🔒 " + m.trigger : m.trigger);
         int actions = m.getGestureCount();
         double secs = m.duration / 1000.0;
         String metaText = actions + " actions · " + String.format(Locale.US, "%.1f", secs) + "s"
-                + (m.locked ? " · from lock screen" : "");
+                + (m.locked ? " · from lock screen" : "")
+                + (m.hasSensitiveSteps() ? " · PIN, private" : (McpGuard.isSensitive(m) ? " · sensitive" : ""));
         h.meta.setText(metaText);
 
         h.btnPlay.setOnClickListener(new View.OnClickListener() {

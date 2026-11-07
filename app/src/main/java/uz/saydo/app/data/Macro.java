@@ -53,7 +53,6 @@ public final class Macro implements Serializable, Comparable<Macro> {
         this.trigger = (trigger != null) ? trigger.trim().toLowerCase() : "";
         this.locked = locked;
         this.createdAt = (createdAt > 0) ? createdAt : System.currentTimeMillis();
-        this.sensitive = sensitive;
         this.category = (category != null && !category.trim().isEmpty()) ? category.trim() : "General";
         this.usageCount = Math.max(0, usageCount);
         this.lastUsedAt = Math.max(0, lastUsedAt);
@@ -67,6 +66,11 @@ public final class Macro implements Serializable, Comparable<Macro> {
             }
             this.gestures = Collections.unmodifiableList(copy);
         }
+
+        // A macro with a PIN step is always sensitive; it cannot be cleared by withSensitive(false).
+        boolean pinStep = false;
+        for (Gesture g : this.gestures) if (g.sensitive) { pinStep = true; break; }
+        this.sensitive = sensitive || pinStep;
 
         if (aliases == null || aliases.isEmpty()) {
             this.aliases = Collections.emptyList();
@@ -137,6 +141,12 @@ public final class Macro implements Serializable, Comparable<Macro> {
 
     public int getGestureCount() {
         return gestures.size();
+    }
+
+    /** True when a step holds a secret (PIN). Such a macro is stored encrypted, hidden from AI and from export. */
+    public boolean hasSensitiveSteps() {
+        for (Gesture g : gestures) if (g.sensitive) return true;
+        return false;
     }
 
     public boolean hasGestures() {

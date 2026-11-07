@@ -134,7 +134,7 @@ final class McpCommands {
         } catch (Fail f) {
             putErr(out, f.getMessage());
         } catch (Throwable t) {
-            DebugLog.e("MCP", tool + " crashed: " + t);
+            DebugLog.e("MCP", tool + " crashed: " + t.getClass().getSimpleName());
             putErr(out, "Phone error in " + tool + ": " + t.getClass().getSimpleName()
                     + (t.getMessage() == null ? "" : " — " + t.getMessage()));
         } finally {
@@ -241,9 +241,9 @@ final class McpCommands {
     // ------------------------------------------------------------------ money-app guard
 
     private static final java.util.Set<String> GUARDED = new HashSet<>(java.util.Arrays.asList(
-            "tap", "long_press", "swipe", "click_element", "type_text"));
+            "tap", "long_press", "swipe", "click_element", "type_text", "read_screen", "screenshot", "scroll_to"));
 
-    /** Tools that act on the screen refuse while a money app is in front (unless the owner allowed it). */
+    /** Tools that act on or read the screen refuse while a money app is in front (unless the owner allowed it). */
     private void guardScreenTool(String tool) throws Exception {
         if (!GUARDED.contains(tool)) return;
         guardForeground();

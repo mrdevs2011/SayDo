@@ -100,7 +100,7 @@ goals about things the macro text does not mention at all (for example the name 
   notification with Allow and Deny, 60 s, no answer = Deny (`McpApproval`). The notification shows only the macro
   trigger. Without these the tool answers with a refusal that tells the AI what to do. Decision table:
   `McpGuard.decideRun`, unit tested.
-- While a money app is in front, `tap`, `long_press`, `swipe`, `click_element`, `type_text` and each click/tap/type
+- While a money app is in front, `tap`, `long_press`, `swipe`, `click_element`, `type_text`, `read_screen`, `screenshot`, `scroll_to` and each click/tap/type
   step of `act` are refused, `open_app` (also inside `act`) refuses to open a money app, unless the owner switched
   on "AI pul ilovalarida ishlay olsin" (default off). `read_screen`, `device_status`, `press` and `wait` still work,
   so the AI can see where it is and leave. A macro the owner approved is not affected.

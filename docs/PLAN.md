@@ -68,3 +68,24 @@ Done on the A12 with test apps: recording from accessibility events, view-based 
 - Repeat a-h on the S22+ (only the old build was measured there).
 - Popup menu item clicks and Enter on the keyboard are not captured in event mode.
 - Owner tests with their own apps: see the list in `docs/STATUS.md` section for 2.16.0 (record a macro with typing and a scroll in an app you use, replay it 10 times, and say which step fails).
+
+## Human tests needed for branch `safe-smart` (nothing here has run on a phone)
+
+Run on a test phone the owner agreed to, after the replay work is merged. Do not use banking or personal apps; use the Settings app's "Confirm screen lock" page or a throw-away app with a biometric prompt. Record each result in `docs/STATUS.md` with the build.
+
+1. Fingerprint wait, recording. Start a recording, open an app screen that asks for the fingerprint (Settings > Security > screen lock confirm), pass it with the finger, stop. Expect: the list item has a step `wait_user (owner: biometric)` (check with `adb logcat -d | grep "Rec:"`: `auth prompt opened ...`, `wait_user biometric`) and no tap on the prompt.
+2. Fingerprint wait, replay. Run that macro. Expect: the phone vibrates, toast and notification "Barmoq izingizni qo'ying", the macro waits, and after the finger it goes on within about 1 s. Write down how long it waited.
+3. Timeout. Run again and do nothing for 60 s. Expect: the macro stops, toast says the wait ran out; `run_macro` through MCP (if MCP is on) says "waited 60 s".
+4. No prompt shown. Run the macro when the phone is already unlocked and the app does not ask. Expect: it waits about 5 s and continues.
+5. Secure screen. Repeat 2 on a screen with FLAG_SECURE. Expect the same result (screen content is never read).
+6. Window names. If 1 recorded no `wait_user`, copy the `auth prompt` window class/package from `adb shell dumpsys window | grep -i biometric` and from `dumpsys accessibility` events, send them to the developer; `AuthDetector` has to learn them.
+7. PIN recording. Choose "PIN" at the prompt. Expect: steps recorded, no digit appears in `adb logcat | grep SayDoDebug`, the list shows the lock badge and "PIN, private", the first-time dialog appears once.
+8. PIN on disk. With a debuggable build or a rooted phone only (release builds block `run-as`): `macros_v2.json` must contain `"type":"enc"` steps and no digits. If you cannot read the file, say so; do not claim it.
+9. PIN replay. Run the PIN macro by voice and from the list. Expect the keypad taps to land; note whether it works on the lock screen and in Settings confirm.
+10. PIN hidden from AI. With MCP on: `list_macros`, `find_macro`, `describe_macro` and `run_macro` must not show or run it; export (if there is a UI path) must not include it; importing a file must not delete it.
+11. Keystore loss. Not testable safely; skip. Known: a reset phone drops these macros.
+12. Money guard. With a throw-away app whose package contains "bank" or "wallet" in front, call `read_screen` and `screenshot` through MCP: both must be refused; `device_status` and `press home` must work.
+13. Approval spoofing. On an Android 12 or older phone (if one exists) start a sensitive `run_macro`, then try `adb shell am broadcast -a uz.saydo.app.MCP_APPROVAL.1 --ez allow true`. Expect: nothing happens, the notification stays until the owner answers.
+14. Backup. `adb shell bmgr` / `adb backup` must not include the app data (Android 12+: check `dumpsys backup` for the package). Optional.
+15. Search. With the owner's real macros call `find_macro` with: "yoqtirgan musiqa", "budilnik qo'y", "включи фонарик", "pochtani tekshir". Write the top result and score for each; the first ones that rank wrong go back to the developer.
+16. Stop messages. Make a macro stop (change the screen so a button is missing) and run it through MCP. Expect `stopped "<name>" at step N of M (...)` with a reason sentence.

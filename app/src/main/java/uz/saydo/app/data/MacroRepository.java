@@ -9,6 +9,10 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import uz.saydo.app.safety.KeystoreBox;
+import uz.saydo.app.safety.SecretBox;
+import uz.saydo.app.safety.SensitiveSteps;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -47,6 +51,12 @@ public final class MacroRepository {
     // In-memory cache keyed by unique Macro ID
     private final Map<String, Macro> cache = new LinkedHashMap<>();
 
+    /**
+     * Encrypts the steps marked sensitive (PIN taps) on disk. Null when the Keystore is unavailable;
+     * then macros with such steps are kept in memory only and never written (fail closed).
+     */
+    private SecretBox secretBox;
+
     public interface OnMacrosChangedListener {
         void onMacrosChanged(List<Macro> macros);
     }
@@ -57,6 +67,13 @@ public final class MacroRepository {
         this.primaryFile = new File(dir, FILE_NAME);
         this.tmpFile = new File(dir, TMP_FILE_NAME);
         this.bakFile = new File(dir, BAK_FILE_NAME);
+        SecretBox box = null;
+        try {
+            box = KeystoreBox.tryCreate();
+        } catch (Throwable ignored) {
+            // no Android Keystore (unit tests): sensitive macros stay in memory only
+        }
+        this.secretBox = box;
 
         loadInitial();
     }
@@ -70,6 +87,30 @@ public final class MacroRepository {
             }
         }
         return sInstance;
+    }
+
+    /** Unit tests only: a software key in place of the Android Keystore. */
+    public void reloadWithBoxForTest(SecretBox box) {
+        this.secretBox = box;
+        loadInitial();
+    }
+
+    /**
+     * One macro as read from disk: sealed steps are opened. Null = unreadable (no key, key lost, data
+     * changed); such a macro is dropped instead of being run with missing steps.
+     */
+    private JSONObject openIfSealed(JSONObject obj) {
+        if (!SensitiveSteps.hasSealed(obj)) return obj;
+        if (secretBox == null) {
+            Log.w(TAG, "Sealed macro skipped: no Keystore");
+            return null;
+        }
+        try {
+            return SensitiveSteps.open(obj, secretBox);
+        } catch (Throwable t) {
+            Log.w(TAG, "Sealed macro skipped: cannot be decrypted (" + t.getClass().getSimpleName() + ")");
+            return null;
+        }
     }
 
     public void addListener(OnMacrosChangedListener listener) {
@@ -154,6 +195,7 @@ public final class MacroRepository {
             cache.clear();
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject obj = arr.optJSONObject(i);
+                if (obj != null) obj = openIfSealed(obj);
                 if (obj != null) {
                     Macro m = Macro.fromJson(obj);
                     if (m != null) {
@@ -199,7 +241,15 @@ public final class MacroRepository {
         try {
             JSONArray arr = new JSONArray();
             for (Macro m : cache.values()) {
-                arr.put(m.toJson());
+                JSONObject j = m.toJson();
+                if (SensitiveSteps.hasSensitive(j)) {
+                    if (secretBox == null) {
+                        Log.w(TAG, "Macro with sensitive steps not written: no Keystore");
+                        continue;
+                    }
+                    j = SensitiveSteps.seal(j, secretBox);
+                }
+                arr.put(j);
             }
             byte[] bytes = arr.toString().getBytes(StandardCharsets.UTF_8);
 
@@ -379,13 +429,14 @@ public final class MacroRepository {
     }
 
     /**
-     * Exports all macros as a JSON array string.
+     * Exports all macros as a JSON array string. Macros with sensitive steps (PIN) are left out.
      */
     public String toJsonString() {
         rwLock.readLock().lock();
         try {
             JSONArray arr = new JSONArray();
             for (Macro m : cache.values()) {
+                if (m.hasSensitiveSteps()) continue;
                 arr.put(m.toJson());
             }
             return arr.toString();
@@ -408,15 +459,19 @@ public final class MacroRepository {
             Map<String, Macro> newItems = new LinkedHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject obj = arr.optJSONObject(i);
-                if (obj != null) {
+                if (obj != null && !SensitiveSteps.hasSealed(obj) && !SensitiveSteps.hasSensitive(obj)) {
                     Macro m = Macro.fromJson(obj);
                     if (m != null) {
                         newItems.put(m.id, m);
                     }
                 }
             }
+            // Export leaves PIN macros out, so an import must not delete them.
+            Map<String, Macro> keep = new LinkedHashMap<>();
+            for (Macro m : cache.values()) if (m.hasSensitiveSteps()) keep.put(m.id, m);
             cache.clear();
             cache.putAll(newItems);
+            cache.putAll(keep);
             persistLocked();
         } catch (Throwable t) {
             Log.e(TAG, "Error importing JSON", t);
