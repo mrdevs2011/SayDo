@@ -475,7 +475,12 @@ public class GestureService extends AccessibilityService {
     private void step(final List<G> list, final int i, final int tok, final int failures) {
         if (tok != token) return;
         if (i >= list.size()) {
-            finish(tok, failures == 0, failures);
+            // Report "done" only when the last action has finished changing the screen.
+            if (list.get(list.size() - 1).sem) {
+                sem.settle(() -> tok == token, () -> finish(tok, failures == 0, failures));
+            } else {
+                finish(tok, failures == 0, failures);
+            }
             return;
         }
         final G g = list.get(i);

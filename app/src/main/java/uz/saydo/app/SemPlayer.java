@@ -61,6 +61,19 @@ final class SemPlayer {
         }
     }
 
+    /** Runs {@code then} once the screen has been quiet for a moment (at most 2 s). */
+    void settle(final BooleanSupplier alive, final Runnable then) {
+        final long start = SystemClock.uptimeMillis();
+        h.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (!alive.getAsBoolean()) return;
+                long now = SystemClock.uptimeMillis();
+                if (now - svc.lastWindowChangeAt >= 600 || now - start > 2000) then.run();
+                else h.postDelayed(this, 100);
+            }
+        }, 300);
+    }
+
     /** Lets a page transition that just started finish before the next view is looked up. */
     private void waitQuiet(final BooleanSupplier alive, final Runnable then) {
         final long start = SystemClock.uptimeMillis();

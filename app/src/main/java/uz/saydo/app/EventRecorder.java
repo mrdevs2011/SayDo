@@ -232,8 +232,27 @@ final class EventRecorder {
             DebugLog.i("Rec", "text event ignored: no keyboard window");
             return; // text changed by the app itself, or typed on an app-drawn keypad
         }
+        if (e.isPassword()) return;
+        // More typing in the field the last step wrote to: take the new text without a node lookup
+        // (the node can be unavailable while the keyboard is busy).
+        if (!steps.isEmpty() && Gesture.TYPE_TEXT.equals(lastType)) {
+            Gesture last = steps.get(steps.size() - 1);
+            CharSequence ecls = e.getClassName();
+            if (last.screenPkg.equals(pkg) && last.anchor != null && ecls != null
+                    && last.anchor.getClassName().equals(ecls.toString())) {
+                StringBuilder sb2 = new StringBuilder();
+                List<CharSequence> p2 = e.getText();
+                if (p2 != null) for (CharSequence c : p2) if (c != null) sb2.append(c);
+                steps.set(steps.size() - 1, last.withText(sb2.toString()));
+                DebugLog.i("Rec", "text update (" + sb2.length() + " chars, added=" + e.getAddedCount() + ")");
+                return;
+            }
+        }
         AccessibilityNodeInfo src = e.getSource();
-        if (src == null) return;
+        if (src == null) {
+            DebugLog.i("Rec", "text event without source node");
+            return;
+        }
         try {
             if (src.isPassword() || !src.isEditable()) return;
             // Typed text is stored in the macro, but never logged.
