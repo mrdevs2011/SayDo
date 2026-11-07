@@ -60,3 +60,11 @@ Test on a phone only after Stages 0-3. It controls the phone remotely.
 ## Stage 1 evidence so far (2026-11-06)
 
 Calculator 5/5 (11 steps) and Clock 5/5 (13 steps incl. one swipe) replays passed; pause cap 3 s confirmed; 14 macros on the main screen fine. Still not run: the 5 short + 2 long, 10 runs each measurement, replay in the owner's own apps, voice.
+
+## Event-based record and replay (2.16.0, 2026-11-07)
+
+Done on the A12 with test apps: recording from accessibility events, view-based replay, typed text, scroll-until-visible, back/home from window changes (numbers in `docs/STATUS.md`). Still open:
+- Re-measure h (20 steps) and e on the newest build (`79b3d89`); the APK could not be downloaded (gh token invalid). Run the Test workflow on the final commit.
+- Repeat a-h on the S22+ (only the old build was measured there).
+- Popup menu item clicks and Enter on the keyboard are not captured in event mode.
+- Owner tests with their own apps: see the list in `docs/STATUS.md` section for 2.16.0 (record a macro with typing and a scroll in an app you use, replay it 10 times, and say which step fails).
