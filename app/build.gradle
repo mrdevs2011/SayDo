@@ -2,6 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+def ksProps = new Properties()
+def ksFile = rootProject.file('keystore.properties')
+if (ksFile.exists()) { ksFile.withInputStream { ksProps.load(it) } }
+
 android {
     namespace 'uz.saydo.app'
     compileSdk 35
@@ -16,10 +20,11 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(System.getenv('VF_KEYSTORE') ?: '../keystore/saydo.jks')
-            storePassword System.getenv('VF_STORE_PASS') ?: 'REMOVED'
-            keyAlias System.getenv('VF_KEY_ALIAS') ?: 'voiceflow'
-            keyPassword System.getenv('VF_KEY_PASS') ?: 'REMOVED'
+            // Parollar kodda saqlanmaydi: muhit o'zgaruvchilari yoki gitga kirmaydigan keystore.properties
+            storeFile file(System.getenv('VF_KEYSTORE') ?: ksProps.getProperty('storeFile', '../keystore/saydo.jks'))
+            storePassword System.getenv('VF_STORE_PASS') ?: ksProps.getProperty('storePassword')
+            keyAlias System.getenv('VF_KEY_ALIAS') ?: ksProps.getProperty('keyAlias', 'voiceflow')
+            keyPassword System.getenv('VF_KEY_PASS') ?: ksProps.getProperty('keyPassword')
         }
     }
 

@@ -8,3 +8,9 @@ captures/
 *.bak
 prompt*.txt
 .agents/
+
+# imzolash kalitlari va parollar: hech qachon commit qilinmaydi
+keystore/
+*.jks
+*.keystore
+keystore.properties
