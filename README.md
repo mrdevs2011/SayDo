@@ -1,5 +1,13 @@
 # SayDo (`uz.saydo.app`)
 
+## ⬇️ APK yuklab olish
+
+**https://github.com/mrdevs2011/SayDo/releases/latest/download/SayDo.apk**
+
+Oxirgi versiya: v2.16.0 (ovozsiz, makroslar bilan). Barcha versiyalar: [Releases](https://github.com/mrdevs2011/SayDo/releases).
+
+---
+
 SayDo: touch macros for Android, controlled remotely through MCP.
 
 Record a sequence of taps, holds and swipes with the floating bubble, name it, and replay it from the app or remotely through MCP (`relay/`). Voice control was removed in 2.15.0.
